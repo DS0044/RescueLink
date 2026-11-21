@@ -90,12 +90,13 @@ export default function App() {
   }, []);
 
   // Route Guard Navigation
-  const navigateTo = (view) => {
+  const navigateTo = (view, userOverride = null) => {
     setShowUserDropdown(false);
+    const currentUser = userOverride !== null ? userOverride : activeUser;
 
     // Protected views require authentication
     const protectedViews = ['dashboard', 'demo', 'admin-users'];
-    if (protectedViews.includes(view) && !activeUser) {
+    if (protectedViews.includes(view) && !currentUser) {
       setLoginRedirectTarget(view);
       setActiveView('login');
       const targetPath = `/login?next=/${view}`;
@@ -106,9 +107,9 @@ export default function App() {
     }
 
     // Admin view requires admin role
-    if (view === 'admin-users' && activeUser?.role !== 'admin') {
+    if (view === 'admin-users' && currentUser?.role !== 'admin') {
       showToast('Access Denied: Administrator role required.');
-      navigateTo('dashboard');
+      navigateTo('dashboard', currentUser);
       return;
     }
 
@@ -203,24 +204,26 @@ export default function App() {
     if (user.must_change_password) {
       setShowPasswordModal(true);
     }
-    navigateTo(target || 'dashboard');
+    fetchData(user);
+    navigateTo(target || 'dashboard', user);
   };
 
   // Fetch initial data (only if authenticated or public simulator/victim)
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (userOverride = null) => {
+    const currentUser = userOverride !== null ? userOverride : activeUser;
     try {
       const headers = {};
       const token = getSessionToken();
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const [simRes] = await Promise.all([fetch('/api/simulator/config')]);
+      const [simRes] = await Promise.all([fetch('/api/simulator/config', { credentials: 'include' })]);
       if (simRes.ok) setChannelStatus(await simRes.json());
 
-      if (activeUser) {
+      if (currentUser) {
         const [sosRes, grpRes, statsRes] = await Promise.all([
-          fetch('/api/sos/list', { headers }),
-          fetch('/api/sos/groups', { headers }),
-          fetch('/api/iece/stats', { headers }),
+          fetch('/api/sos/list', { headers, credentials: 'include' }),
+          fetch('/api/sos/groups', { headers, credentials: 'include' }),
+          fetch('/api/iece/stats', { headers, credentials: 'include' }),
         ]);
 
         if (sosRes.ok) setReports(await sosRes.json());
@@ -235,6 +238,16 @@ export default function App() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Periodic poll fallback on dashboard to guarantee fresh reports even if WS hiccups
+  useEffect(() => {
+    if (activeView === 'dashboard' && activeUser) {
+      const interval = setInterval(() => {
+        fetchData();
+      }, 4000);
+      return () => clearInterval(interval);
+    }
+  }, [activeView, activeUser, fetchData]);
 
   // Connect WebSocket for real-time live events (authenticated with token)
   useEffect(() => {
@@ -505,8 +518,15 @@ export default function App() {
             {activeView === 'victim' && (
               <VictimView
                 channelStatus={channelStatus}
-                onSosCreated={() => {
+                onSosCreated={(newSos) => {
                   fetchData();
+                  if (newSos && (newSos.packet_id || newSos.victim_id)) {
+                    setReports((prev) => {
+                      const id = newSos.packet_id;
+                      if (id && prev.some((r) => r.packet_id === id)) return prev;
+                      return [newSos, ...prev];
+                    });
+                  }
                 }}
               />
             )}

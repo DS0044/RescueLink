@@ -3,13 +3,31 @@
  * Communicates with backend using HttpOnly secure cookies and JWT tokens.
  */
 
-let _cachedToken = null;
+let _cachedToken = (() => {
+  try {
+    return localStorage.getItem('rescuelink_jwt_token') || null;
+  } catch {
+    return null;
+  }
+})();
 
 export const setSessionToken = (token) => {
   _cachedToken = token;
+  try {
+    if (token) {
+      localStorage.setItem('rescuelink_jwt_token', token);
+    } else {
+      localStorage.removeItem('rescuelink_jwt_token');
+    }
+  } catch {}
 };
 
 export const getSessionToken = () => {
+  if (!_cachedToken) {
+    try {
+      _cachedToken = localStorage.getItem('rescuelink_jwt_token') || null;
+    } catch {}
+  }
   return _cachedToken;
 };
 
@@ -20,6 +38,7 @@ export async function loginUser(usernameOrEmail, password, rememberMe = false, h
   const res = await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify({
       username_or_email: usernameOrEmail,
       password: password,
@@ -46,6 +65,7 @@ export async function registerUser(payload) {
   const res = await fetch('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(payload),
   });
 
@@ -61,11 +81,12 @@ export async function registerUser(payload) {
  */
 export async function getCurrentUser() {
   const headers = {};
-  if (_cachedToken) {
-    headers['Authorization'] = `Bearer ${_cachedToken}`;
+  const token = getSessionToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch('/api/auth/me', { headers });
+  const res = await fetch('/api/auth/me', { headers, credentials: 'include' });
   if (!res.ok) {
     if (res.status === 401) {
       // Try refresh
@@ -88,7 +109,7 @@ export async function getCurrentUser() {
  */
 export async function refreshSessionToken() {
   try {
-    const res = await fetch('/api/auth/refresh', { method: 'POST' });
+    const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
     if (res.ok) {
       const data = await res.json();
       if (data.token) {
@@ -106,11 +127,17 @@ export async function refreshSessionToken() {
  * Signs out current user and revokes refresh token.
  */
 export async function logoutUser() {
-  _cachedToken = null;
   try {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    const headers = {};
+    const token = getSessionToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    await fetch('/api/auth/logout', { method: 'POST', headers, credentials: 'include' });
   } catch (err) {
     console.error('Logout error:', err);
+  } finally {
+    setSessionToken(null);
   }
 }
 
