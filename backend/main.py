@@ -11,13 +11,31 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, status
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import init_db, get_db
-from models import SOSReportModel, ClusterGroupModel, DownlinkMessageModel
+from models import SOSReportModel, ClusterGroupModel, DownlinkMessageModel, UserModel, RefreshTokenModel, AuditLogModel
+from auth import (
+    get_current_user,
+    require_role,
+    require_responder,
+    require_coordinator,
+    require_admin,
+    hash_password,
+    verify_password,
+    create_access_token,
+    create_refresh_token,
+    verify_and_rotate_refresh_token,
+    revoke_refresh_token,
+    revoke_all_user_tokens,
+    log_audit,
+    check_ip_rate_limit,
+    validate_ws_token,
+    COOKIE_SECURE,
+)
 from iece.packet import (
     EmergencyType,
     SeverityLevel,
@@ -171,6 +189,58 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Enforces strict production security headers."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https://*.tile.openstreetmap.org https://unpkg.com https://fonts.googleapis.com https://fonts.gstatic.com; "
+        "connect-src 'self' ws: wss:; frame-ancestors 'none';"
+    )
+    return response
+
+
+# Auth & RBAC Request Models
+class LoginRequest(BaseModel):
+    username_or_email: str
+    password: str
+    remember_me: bool = False
+    honeypot: Optional[str] = None
+
+
+class RegisterRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=128)
+    username: str = Field(..., min_length=3, max_length=24)
+    email: str
+    organisation: str = Field(..., min_length=2, max_length=128)
+    role: str = Field(default="responder")  # responder, coordinator
+    password: str = Field(..., min_length=10)
+    confirm_password: str
+    honeypot: Optional[str] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=10)
+    confirm_password: str
+
+
+class OverridePriorityRequest(BaseModel):
+    severity: int = Field(..., ge=1, le=4)
+    reason: Optional[str] = "Coordinator manual priority override"
+
+
+class UpdateUserStatusRequest(BaseModel):
+    status: str  # active, disabled, pending
+
+
+class UpdateUserRoleRequest(BaseModel):
+    role: str  # responder, coordinator, admin
+
+
 # Pydantic Request Models
 class SendSOSRequest(BaseModel):
     victim_id: Optional[int] = Field(default=None, description="Optional custom victim device ID")
@@ -257,6 +327,562 @@ async def update_simulator_config(req: SimConfigRequest):
     status_data = lora_simulator.get_status()
     await ws_manager.broadcast({"type": "SIM_CONFIG_UPDATED", "config": status_data})
     return status_data
+
+
+# ==========================================
+# AUTHENTICATION & ACCESS CONTROL ENDPOINTS
+# ==========================================
+
+@app.post("/api/auth/login")
+async def user_login(
+    req: LoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """
+    Authenticates rescue responders with username/email & password.
+    Enforces brute-force lockout, rate limiting, and returns HttpOnly JWT cookies.
+    """
+    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    # 1. Anti-spam honeypot
+    if req.honeypot:
+        await asyncio.sleep(0.5)
+        raise HTTPException(status_code=400, detail="Invalid submission")
+
+    # 2. IP rate limiting (10 attempts / 5 mins)
+    if not check_ip_rate_limit(client_ip, "login", max_requests=10, window_sec=300):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts, try again in 5 minutes",
+        )
+
+    identifier = req.username_or_email.strip().lower()
+    now = int(time.time())
+
+    # 3. Find user by username or email
+    user = db.query(UserModel).filter(
+        (UserModel.username.ilike(identifier)) | (UserModel.email.ilike(identifier))
+    ).first()
+
+    # Timing-attack mitigation: run dummy verify if user not found
+    if not user:
+        verify_password("dummy_password_for_timing", "$2b$12$e8YDummyHashForConstantTimingMitigation1234567890123456")
+        log_audit(db, "login_failed_user_not_found", username=identifier, ip_address=client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username/email or password",
+        )
+
+    # 4. Check account lockout
+    if user.locked_until > now:
+        rem_min = max(1, (user.locked_until - now) // 60)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Too many attempts, try again in 5 minutes",
+        )
+
+    # 5. Check account status
+    if user.status == "disabled":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account disabled",
+        )
+    if user.status == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account pending approval",
+        )
+
+    # 6. Verify password
+    if not verify_password(req.password, user.password_hash):
+        user.failed_attempts += 1
+        if user.failed_attempts >= 5:
+            # 5 failed attempts -> 5 min lock (300s), increases on repeats
+            lock_duration = 300 * (2 ** min(4, user.failed_attempts - 5))
+            user.locked_until = now + lock_duration
+        db.commit()
+        log_audit(db, "login_failed", user_id=user.id, username=user.username, ip_address=client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username/email or password",
+        )
+
+    # 7. Login successful: reset failed attempts
+    user.failed_attempts = 0
+    user.locked_until = 0
+    user.last_login = now
+    db.commit()
+
+    # 8. Issue JWT access token and refresh token
+    access_token = create_access_token(user)
+    refresh_token = create_refresh_token(user, req.remember_me, db, request)
+
+    # 9. Set HttpOnly, SameSite cookies
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        samesite="lax",
+        secure=COOKIE_SECURE,
+        max_age=15 * 60,
+        path="/",
+    )
+    refresh_max_age = (30 if req.remember_me else 7) * 86400
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        samesite="strict",
+        secure=COOKIE_SECURE,
+        max_age=refresh_max_age,
+        path="/api/auth/refresh",
+    )
+
+    log_audit(db, "login_success", user_id=user.id, username=user.username, ip_address=client_ip)
+
+    return {
+        "status": "authenticated",
+        "token": access_token,
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "status": user.status,
+            "organisation": user.organisation,
+            "must_change_password": user.must_change_password,
+        },
+    }
+
+
+@app.post("/api/auth/register")
+async def user_register(
+    req: RegisterRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Registers a new responder or coordinator access request.
+    Account created in 'pending' status awaiting administrator approval.
+    """
+    import re
+    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    # 1. Anti-spam honeypot
+    if req.honeypot:
+        await asyncio.sleep(0.5)
+        raise HTTPException(status_code=400, detail="Invalid request")
+
+    # 2. Rate limiting (5 per 10 mins)
+    if not check_ip_rate_limit(client_ip, "register", max_requests=5, window_sec=600):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many registration requests. Please wait a few minutes.",
+        )
+
+    # 3. Validation: username (3-24 chars, letters/numbers/underscore)
+    username = req.username.strip().lower()
+    if not re.match(r"^[a-zA-Z0-9_]{3,24}$", username):
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be 3-24 characters, containing only letters, numbers, and underscores.",
+        )
+
+    # 4. Validation: email
+    email = req.email.strip().lower()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="Please provide a valid email address.")
+
+    # 5. Check uniqueness
+    if db.query(UserModel).filter_by(username=username).first():
+        raise HTTPException(status_code=400, detail="This username is already taken.")
+    if db.query(UserModel).filter_by(email=email).first():
+        raise HTTPException(status_code=400, detail="An account with this email already exists.")
+
+    # 6. Password strength & common passwords check
+    if len(req.password) < 10:
+        raise HTTPException(status_code=400, detail="Password must be at least 10 characters long.")
+    if req.password != req.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match.")
+
+    common_passwords = {"password123", "admin12345", "1234567890", "qwerty12345", "rescuelink123", "letmein12345"}
+    if req.password.lower() in common_passwords:
+        raise HTTPException(status_code=400, detail="Password is too common. Please choose a stronger password.")
+
+    # 7. Role selection
+    role = req.role.lower().strip()
+    if role not in ("responder", "coordinator"):
+        role = "responder"
+
+    now = int(time.time())
+    import secrets
+    user = UserModel(
+        id=f"USR-{secrets.token_hex(6).upper()}",
+        name=req.name.strip(),
+        username=username,
+        email=email,
+        password_hash=hash_password(req.password),
+        role=role,
+        status="pending",
+        organisation=req.organisation.strip(),
+        created_at=now,
+        last_login=None,
+        failed_attempts=0,
+        locked_until=0,
+        must_change_password=False,
+    )
+    db.add(user)
+    db.commit()
+
+    log_audit(db, "user_registered", user_id=user.id, username=user.username, ip_address=client_ip, details=f"Requested role: {role}")
+
+    return {
+        "status": "pending",
+        "message": "Your request was sent. An administrator must approve your account before you can sign in.",
+    }
+
+
+@app.post("/api/auth/refresh")
+async def user_refresh_token(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """Refreshes short-lived JWT access token using HttpOnly refresh token cookie."""
+    token_str = request.cookies.get("refresh_token")
+    if not token_str:
+        raise HTTPException(status_code=401, detail="Refresh token missing")
+
+    user, new_access_token, new_refresh_token = verify_and_rotate_refresh_token(token_str, db, request)
+
+    response.set_cookie(
+        key="access_token",
+        value=new_access_token,
+        httponly=True,
+        samesite="lax",
+        secure=COOKIE_SECURE,
+        max_age=15 * 60,
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        samesite="strict",
+        secure=COOKIE_SECURE,
+        max_age=30 * 86400,
+        path="/api/auth/refresh",
+    )
+    return {
+        "status": "refreshed",
+        "token": new_access_token,
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "username": user.username,
+            "role": user.role,
+            "status": user.status,
+            "organisation": user.organisation,
+        },
+    }
+
+
+@app.post("/api/auth/logout")
+async def user_logout(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """Signs out user and revokes active refresh token."""
+    token_str = request.cookies.get("refresh_token")
+    if token_str:
+        revoke_refresh_token(token_str, db)
+
+    response.delete_cookie(key="access_token", path="/")
+    response.delete_cookie(key="refresh_token", path="/api/auth/refresh")
+    return {"status": "logged_out", "message": "Successfully signed out."}
+
+
+@app.get("/api/auth/me")
+async def get_current_user_profile(user: UserModel = Depends(get_current_user)):
+    """Returns currently authenticated user profile."""
+    return {
+        "id": user.id,
+        "name": user.name,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "status": user.status,
+        "organisation": user.organisation,
+        "must_change_password": user.must_change_password,
+        "last_login": user.last_login,
+        "created_at": user.created_at,
+    }
+
+
+@app.post("/api/auth/change-password")
+async def user_change_password(
+    req: ChangePasswordRequest,
+    response: Response,
+    user: UserModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Changes password for authenticated user and revokes all other sessions."""
+    if not verify_password(req.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+
+    if len(req.new_password) < 10:
+        raise HTTPException(status_code=400, detail="New password must be at least 10 characters.")
+
+    if req.new_password != req.confirm_password:
+        raise HTTPException(status_code=400, detail="New passwords do not match.")
+
+    user.password_hash = hash_password(req.new_password)
+    user.must_change_password = False
+    db.commit()
+
+    # Revoke all existing refresh tokens
+    revoke_all_user_tokens(user.id, db)
+
+    # Issue new token pair
+    new_access_token = create_access_token(user)
+    new_refresh_token = create_refresh_token(user, remember_me=False, db=db)
+
+    response.set_cookie(
+        key="access_token",
+        value=new_access_token,
+        httponly=True,
+        samesite="lax",
+        secure=COOKIE_SECURE,
+        max_age=15 * 60,
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        samesite="strict",
+        secure=COOKIE_SECURE,
+        max_age=7 * 86400,
+        path="/api/auth/refresh",
+    )
+
+    log_audit(db, "password_changed", user_id=user.id, username=user.username)
+    return {
+        "status": "success",
+        "message": "Password updated successfully. All other sessions have been signed out.",
+        "token": new_access_token,
+    }
+
+
+# ==========================================
+# ADMIN: USER MANAGEMENT & AUDIT LOGS
+# ==========================================
+
+@app.get("/api/admin/users")
+def admin_list_users(
+    admin: UserModel = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin only: list all registered responder accounts."""
+    users = db.query(UserModel).order_by(UserModel.created_at.desc()).all()
+    return [
+        {
+            "id": u.id,
+            "name": u.name,
+            "username": u.username,
+            "email": u.email,
+            "role": u.role,
+            "status": u.status,
+            "organisation": u.organisation,
+            "created_at": u.created_at,
+            "last_login": u.last_login,
+            "must_change_password": u.must_change_password,
+        }
+        for u in users
+    ]
+
+
+@app.post("/api/admin/users/{user_id}/approve")
+def admin_approve_user(
+    user_id: str,
+    admin: UserModel = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin only: approves a pending user account."""
+    user = db.query(UserModel).filter_by(id=user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.status = "active"
+    db.commit()
+    log_audit(db, "user_approved", user_id=user.id, username=user.username, details=f"Approved by {admin.username}")
+    return {"status": "success", "message": f"User '{user.username}' has been approved and activated."}
+
+
+@app.post("/api/admin/users/{user_id}/reject")
+def admin_reject_user(
+    user_id: str,
+    admin: UserModel = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin only: rejects or disables a user account."""
+    user = db.query(UserModel).filter_by(id=user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.status = "disabled"
+    revoke_all_user_tokens(user.id, db)
+    db.commit()
+    log_audit(db, "user_rejected", user_id=user.id, username=user.username, details=f"Rejected by {admin.username}")
+    return {"status": "success", "message": f"User '{user.username}' has been rejected."}
+
+
+@app.post("/api/admin/users/{user_id}/status")
+def admin_update_user_status(
+    user_id: str,
+    req: UpdateUserStatusRequest,
+    admin: UserModel = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin only: updates account status (active, disabled, pending)."""
+    user = db.query(UserModel).filter_by(id=user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if req.status not in ("active", "disabled", "pending"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    user.status = req.status
+    if req.status == "disabled":
+        revoke_all_user_tokens(user.id, db)
+    db.commit()
+    log_audit(db, f"user_status_{req.status}", user_id=user.id, username=user.username, details=f"Status changed to {req.status} by {admin.username}")
+    return {"status": "success", "message": f"User status updated to '{req.status}'"}
+
+
+@app.post("/api/admin/users/{user_id}/role")
+def admin_update_user_role(
+    user_id: str,
+    req: UpdateUserRoleRequest,
+    admin: UserModel = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin only: updates user role (admin, coordinator, responder)."""
+    user = db.query(UserModel).filter_by(id=user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if req.role not in ("admin", "coordinator", "responder"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    user.role = req.role
+    db.commit()
+    log_audit(db, "role_changed", user_id=user.id, username=user.username, details=f"Role changed to {req.role} by {admin.username}")
+    return {"status": "success", "message": f"User role updated to '{req.role}'"}
+
+
+@app.post("/api/admin/users/{user_id}/reset-password")
+def admin_reset_password(
+    user_id: str,
+    admin: UserModel = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin only: generates one-time temporary password. User must change it at next login."""
+    user = db.query(UserModel).filter_by(id=user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    import secrets
+    temp_pw = f"TempRescue!{secrets.token_hex(3)}"
+    user.password_hash = hash_password(temp_pw)
+    user.must_change_password = True
+    user.failed_attempts = 0
+    user.locked_until = 0
+    revoke_all_user_tokens(user.id, db)
+    db.commit()
+
+    log_audit(db, "admin_password_reset", user_id=user.id, username=user.username, details=f"Password reset by {admin.username}")
+    return {
+        "status": "success",
+        "temp_password": temp_pw,
+        "message": f"Temporary password generated for {user.username}. They will be required to choose a new password upon signing in.",
+    }
+
+
+@app.get("/api/admin/audit-logs")
+def admin_get_audit_logs(
+    admin: UserModel = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin only: fetch recent security and access audit logs."""
+    logs = db.query(AuditLogModel).order_by(AuditLogModel.timestamp.desc()).limit(100).all()
+    return [
+        {
+            "id": l.id,
+            "user_id": l.user_id,
+            "username": l.username,
+            "action": l.action,
+            "details": l.details,
+            "ip_address": l.ip_address,
+            "timestamp": l.timestamp,
+        }
+        for l in logs
+    ]
+
+
+# ==========================================
+# COORDINATOR: AI PRIORITY OVERRIDE
+# ==========================================
+
+@app.post("/api/sos/{sos_id}/override")
+async def coordinator_override_priority(
+    sos_id: str,
+    req: OverridePriorityRequest,
+    coordinator: UserModel = Depends(require_coordinator),
+    db: Session = Depends(get_db),
+):
+    """
+    Coordinator & Admin only: Manually overrides AI triage severity priority (P1-P4).
+    Enforces RBAC: Responders receive 403 Forbidden.
+    """
+    report = db.query(SOSReportModel).filter_by(packet_id=sos_id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="SOS report not found")
+
+    old_sev = report.severity
+    new_sev = req.severity
+    report.severity = new_sev
+    report.severity_label = SeverityLevel.label(new_sev)
+    db.commit()
+
+    # Update in-memory priority queue
+    rebuild_engine_state(db)
+
+    log_audit(
+        db,
+        "priority_overridden",
+        user_id=coordinator.id,
+        username=coordinator.username,
+        details=f"Overrode priority for {sos_id} from P{old_sev} to P{new_sev}. Reason: {req.reason}",
+    )
+
+    await ws_manager.broadcast({
+        "type": "PRIORITY_OVERRIDDEN",
+        "sos_id": sos_id,
+        "old_severity": old_sev,
+        "new_severity": new_sev,
+        "severity_label": report.severity_label,
+        "coordinator": coordinator.name,
+        "reason": req.reason,
+    })
+
+    return {
+        "status": "success",
+        "sos_id": sos_id,
+        "old_severity": old_sev,
+        "new_severity": new_sev,
+        "severity_label": report.severity_label,
+        "coordinator": coordinator.name,
+        "message": f"Priority successfully updated to {report.severity_label} by Coordinator {coordinator.name}",
+    }
 
 
 @app.post("/api/auth/responder-login")
@@ -487,8 +1113,11 @@ async def receive_hardware_uplink(req: UplinkHexRequest, db: Session = Depends(g
 
 
 @app.get("/api/sos/list")
-def list_sos_reports(db: Session = Depends(get_db)):
-    """List all SOS reports ordered by Priority (P1 first, then oldest timestamp)."""
+def list_sos_reports(
+    user: UserModel = Depends(require_responder),
+    db: Session = Depends(get_db),
+):
+    """List all SOS reports ordered by Priority (P1 first, then oldest timestamp). Requires Responder+."""
     reports = db.query(SOSReportModel).order_by(
         SOSReportModel.severity.asc(),
         SOSReportModel.timestamp.asc()
@@ -533,14 +1162,21 @@ def list_sos_reports(db: Session = Depends(get_db)):
 
 
 @app.get("/api/sos/groups")
-def list_groups(db: Session = Depends(get_db)):
-    """List grouped cluster cards with nested reports."""
+def list_groups(
+    user: UserModel = Depends(require_responder),
+    db: Session = Depends(get_db),
+):
+    """List grouped cluster cards with nested reports. Requires Responder+."""
     groups = sos_grouper.list_groups()
     return groups
 
 
 @app.get("/api/sos/{sos_id}")
-def get_sos_detail(sos_id: str, db: Session = Depends(get_db)):
+def get_sos_detail(
+    sos_id: str,
+    user: UserModel = Depends(require_responder),
+    db: Session = Depends(get_db),
+):
     r = db.query(SOSReportModel).filter_by(packet_id=sos_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="SOS Report not found")
@@ -780,7 +1416,8 @@ async def record_and_dispatch_downlink(
 async def accept_sos_report(
     sos_id: str,
     req: AcceptSOSRequest,
-    db: Session = Depends(get_db)
+    user: UserModel = Depends(require_responder),
+    db: Session = Depends(get_db),
 ):
     """
     Authorized responder accepts an emergency SOS:
@@ -812,8 +1449,8 @@ async def accept_sos_report(
         target_status="accepted",
         eta_minutes=eta_min,
         team_type=team_type,
-        responder_id=req.responder_id,
-        responder_name=req.responder_name,
+        responder_id=req.responder_id or user.id,
+        responder_name=req.responder_name or user.name,
         note_code=req.note_code or 0,
         note_text=req.note_text,
         db=db,
@@ -825,7 +1462,8 @@ async def accept_sos_report(
 async def update_sos_status(
     sos_id: str,
     req: UpdateStatusRequest,
-    db: Session = Depends(get_db)
+    user: UserModel = Depends(require_responder),
+    db: Session = Depends(get_db),
 ):
     """
     Authorized responder updates mission lifecycle status:
@@ -856,8 +1494,8 @@ async def update_sos_status(
         target_status=target_status,
         eta_minutes=eta_min,
         team_type=team_type,
-        responder_id=req.responder_id or report.responder_id or "RESP-NDRF-01",
-        responder_name=req.responder_name or report.responder_name,
+        responder_id=req.responder_id or report.responder_id or user.id,
+        responder_name=req.responder_name or report.responder_name or user.name,
         note_code=note_code,
         note_text=req.note_text,
         db=db,
@@ -970,6 +1608,7 @@ def get_eta_estimate(
 async def simulate_rescue_mission(
     sos_id: str,
     req: SimulateMissionRequest = None,
+    user: UserModel = Depends(require_responder),
     db: Session = Depends(get_db),
 ):
     """
@@ -1052,6 +1691,7 @@ async def simulate_rescue_mission(
 async def tamper_downlink_demo(
     sos_id: str,
     tamper_type: str = Query(default="corrupt_signature"),
+    user: UserModel = Depends(require_responder),
     db: Session = Depends(get_db),
 ):
     """
@@ -1223,7 +1863,10 @@ async def tamper_demo_ack(
 
 
 @app.post("/api/demo/sample-two")
-async def send_two_sample_emergencies(db: Session = Depends(get_db)):
+async def send_two_sample_emergencies(
+    user: UserModel = Depends(require_coordinator),
+    db: Session = Depends(get_db),
+):
     """
     Demo Button: Sends two sample emergencies (heart attack P1 + stranded general P3)
     Visibly demonstrating that P1 is sorted and dispatched first regardless of arrival order.
@@ -1266,7 +1909,10 @@ async def send_two_sample_emergencies(db: Session = Depends(get_db)):
 
 
 @app.post("/api/demo/sample-five")
-async def generate_five_nearby_sos(db: Session = Depends(get_db)):
+async def generate_five_nearby_sos(
+    user: UserModel = Depends(require_coordinator),
+    db: Session = Depends(get_db),
+):
     """
     Demo Button: Generates 5 nearby SOS reports in a flood zone within 50m.
     Demonstrates IECE automatic duplicate grouping into a single cluster card.
@@ -1307,7 +1953,10 @@ async def generate_five_nearby_sos(db: Session = Depends(get_db)):
 
 
 @app.post("/api/demo/reset")
-def reset_demo_data(db: Session = Depends(get_db)):
+def reset_demo_data(
+    user: UserModel = Depends(require_coordinator),
+    db: Session = Depends(get_db),
+):
     """Clears all records and resets queues for a clean demo."""
     db.query(SOSReportModel).delete()
     db.query(ClusterGroupModel).delete()
@@ -1326,7 +1975,10 @@ def reset_demo_data(db: Session = Depends(get_db)):
 
 
 @app.post("/api/demo/seed")
-def seed_demo_data(db: Session = Depends(get_db)):
+def seed_demo_data(
+    user: UserModel = Depends(require_coordinator),
+    db: Session = Depends(get_db),
+):
     """Seeds sample data so demo never starts empty."""
     db.query(SOSReportModel).delete()
     db.query(ClusterGroupModel).delete()
@@ -1339,8 +1991,11 @@ def seed_demo_data(db: Session = Depends(get_db)):
 
 
 @app.get("/api/iece/stats")
-def get_iece_stats(db: Session = Depends(get_db)):
-    """Returns engine metrics for dashboard and evaluator inspection."""
+def get_iece_stats(
+    user: UserModel = Depends(require_responder),
+    db: Session = Depends(get_db),
+):
+    """Returns engine metrics for dashboard and evaluator inspection. Requires Responder+."""
     total_sos = db.query(SOSReportModel).count()
     pending_sos = db.query(SOSReportModel).filter_by(status="pending").count()
     accepted_sos = db.query(SOSReportModel).filter_by(status="accepted").count()
@@ -1367,21 +2022,38 @@ def get_iece_stats(db: Session = Depends(get_db)):
     }
 
 
-# WebSocket for Live Dashboard Updates
+# WebSocket for Live Dashboard Updates (Authenticated)
 @app.websocket("/ws/dashboard")
-async def websocket_dashboard(websocket: WebSocket):
+async def websocket_dashboard(
+    websocket: WebSocket,
+    token: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    cookie_token = websocket.cookies.get("access_token")
+    auth_token = token or cookie_token
+    user = validate_ws_token(auth_token, db)
+    if not user:
+        await websocket.close(code=4401, reason="Unauthorized: Valid authentication token required")
+        return
+
     await ws_manager.connect(websocket)
     try:
-        # Send initial welcome and channel status
+        # Send initial welcome and authenticated status
         await websocket.send_json({
             "type": "CONNECTED",
-            "message": "Connected to RescueLink Real-time Telemetry Feed",
+            "message": f"Connected as {user.name} ({user.role})",
+            "user": {"id": user.id, "name": user.name, "role": user.role},
             "channel_mode": lora_simulator.mode,
             "time": int(time.time()),
         })
         while True:
             data = await websocket.receive_text()
-            # Handle client ping or command
+            # Verify user status on each interaction
+            db.refresh(user)
+            if user.status != "active":
+                await websocket.send_json({"type": "FORCE_DISCONNECT", "reason": "Account inactive or disabled"})
+                await websocket.close(code=4403, reason="Account disabled")
+                break
             try:
                 msg = json.loads(data)
                 if msg.get("action") == "ping":

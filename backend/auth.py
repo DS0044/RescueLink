@@ -42,6 +42,11 @@ _IP_REQUEST_LOG = defaultdict(list)
 
 def check_ip_rate_limit(ip: str, endpoint: str, max_requests: int = 10, window_sec: int = 300) -> bool:
     """Returns True if within limit, False if rate limited."""
+    # In development mode, relax rate limit for localhost to facilitate automated test suites
+    if ENVIRONMENT == "development" and ip in ("127.0.0.1", "localhost", "::1"):
+        max_requests = 100
+        window_sec = 60
+
     now = time.time()
     key = (ip or "127.0.0.1", endpoint)
     # Filter out entries older than window
