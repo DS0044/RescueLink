@@ -40,6 +40,7 @@ import {
   downloadGpx,
   downloadKml,
 } from '../utils/crypto';
+import { authFetch } from '../utils/auth';
 
 export default function DashboardView({
   reports,
@@ -596,7 +597,7 @@ export default function DashboardView({
         note_text: customNoteText || undefined,
       };
 
-      const res = await fetch(`/api/sos/${acceptingSos.packet_id}/accept`, {
+      const res = await authFetch(`/api/sos/${acceptingSos.packet_id}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -628,7 +629,7 @@ export default function DashboardView({
         responder_id: activeResponder?.id || 'RESP-NDRF-01',
         eta_minutes: overrideEta,
       };
-      const res = await fetch(`/api/sos/${sosId}/status`, {
+      const res = await authFetch(`/api/sos/${sosId}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -639,6 +640,33 @@ export default function DashboardView({
       }
     } catch (err) {
       alert(`Status update error: ${err.message}`);
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  // Coordinator Priority Override (Coordinator / Admin Only)
+  const handleOverridePriority = async (sosId, newSeverity) => {
+    setUpdatingStatus(true);
+    try {
+      const res = await authFetch(`/api/sos/${sosId}/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          severity: Number(newSeverity),
+          reason: 'Coordinator manual reassessment',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedSos((prev) => (prev && prev.packet_id === sosId ? { ...prev, severity: newSeverity, severity_label: data.new_severity_label } : prev));
+        if (onAcceptSos) onAcceptSos();
+      } else {
+        const err = await res.json();
+        alert(`Priority override failed: ${err.detail || 'Coordinator authorization required'}`);
+      }
+    } catch (err) {
+      alert(`Priority override error: ${err.message}`);
     } finally {
       setUpdatingStatus(false);
     }
@@ -1079,6 +1107,57 @@ export default function DashboardView({
                       <CheckCircle className="w-3 h-3" />
                       <span>Mark Arrived</span>
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* COORDINATOR & ADMIN EXCLUSIVE: AI TRIAGE PRIORITY OVERRIDE */}
+              {(activeResponder?.role === 'coordinator' || activeResponder?.role === 'admin') && (
+                <div style={{
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  backgroundColor: 'rgba(56, 189, 248, 0.08)',
+                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  marginBottom: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '8px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Shield className="w-4 h-4 text-sky-400" />
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#BAE6FD' }}>
+                      Coordinator Priority Override:
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    {[
+                      { sev: 1, label: 'P1 Crit', bg: '#EF4444' },
+                      { sev: 2, label: 'P2 Urg', bg: '#FF6A1A' },
+                      { sev: 3, label: 'P3 Help', bg: '#F59E0B' },
+                      { sev: 4, label: 'P4 Safe', bg: '#10B981' },
+                    ].map((btn) => (
+                      <button
+                        key={btn.sev}
+                        type="button"
+                        disabled={updatingStatus || selectedSos.severity === btn.sev}
+                        onClick={() => handleOverridePriority(selectedSos.packet_id, btn.sev)}
+                        style={{
+                          padding: '3px 8px',
+                          borderRadius: '4px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          cursor: selectedSos.severity === btn.sev ? 'default' : 'pointer',
+                          backgroundColor: selectedSos.severity === btn.sev ? btn.bg : 'transparent',
+                          color: selectedSos.severity === btn.sev ? '#FFFFFF' : '#94A3B8',
+                          border: `1px solid ${selectedSos.severity === btn.sev ? btn.bg : 'var(--border-default)'}`,
+                          opacity: selectedSos.severity === btn.sev ? 1 : 0.8,
+                        }}
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}

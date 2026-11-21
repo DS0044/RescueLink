@@ -142,6 +142,33 @@ export async function logoutUser() {
 }
 
 /**
+ * Authenticated fetch helper: automatically injects Bearer token,
+ * credentials include, and silently retries on token expiration.
+ */
+export async function authFetch(url, options = {}) {
+  const headers = options.headers ? { ...options.headers } : {};
+  const token = getSessionToken();
+  if (token && !headers['Authorization']) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const opts = {
+    ...options,
+    headers,
+    credentials: options.credentials || 'include',
+  };
+
+  let res = await fetch(url, opts);
+  if (res.status === 401) {
+    const refreshed = await refreshSessionToken();
+    if (refreshed && refreshed.token) {
+      headers['Authorization'] = `Bearer ${refreshed.token}`;
+      res = await fetch(url, { ...opts, headers });
+    }
+  }
+  return res;
+}
+
+/**
  * Changes authenticated user password.
  */
 export async function changeUserPassword(currentPassword, newPassword, confirmPassword) {

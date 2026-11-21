@@ -19,6 +19,7 @@ import {
   ShieldX,
   Navigation,
 } from 'lucide-react';
+import { authFetch } from '../utils/auth';
 
 export default function DemoControlPanel({
   channelStatus,
@@ -70,7 +71,7 @@ export default function DemoControlPanel({
     setBusyAction('simulateMission');
     try {
       // Find an SOS or pick first from list
-      const listRes = await fetch('/api/sos/list');
+      const listRes = await authFetch('/api/sos/list');
       const list = await listRes.json();
       if (!list || list.length === 0) {
         alert('Please seed or send an SOS first before simulating a mission.');
@@ -79,7 +80,7 @@ export default function DemoControlPanel({
       const target = list[0];
       setLastSimulatedId(target.packet_id);
 
-      const res = await fetch(`/api/demo/simulate-mission/${target.packet_id}`, {
+      const res = await authFetch(`/api/demo/simulate-mission/${target.packet_id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ speed: simSpeed }),
@@ -98,14 +99,14 @@ export default function DemoControlPanel({
   const handleQuickAccept = async () => {
     setBusyAction('quickAccept');
     try {
-      const listRes = await fetch('/api/sos/list');
+      const listRes = await authFetch('/api/sos/list');
       const list = await listRes.json();
       const pending = list.find((r) => r.status === 'pending') || list[0];
       if (!pending) {
         alert('No active SOS to accept.');
         return;
       }
-      const res = await fetch(`/api/sos/${pending.packet_id}/accept`, {
+      const res = await authFetch(`/api/sos/${pending.packet_id}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -130,7 +131,7 @@ export default function DemoControlPanel({
   const handleSendEtaUpdate = async () => {
     setBusyAction('etaUpdate');
     try {
-      const listRes = await fetch('/api/sos/list');
+      const listRes = await authFetch('/api/sos/list');
       const list = await listRes.json();
       const accepted = list.find((r) => r.status === 'accepted' || r.status === 'en_route') || list[0];
       if (!accepted) {
@@ -138,7 +139,7 @@ export default function DemoControlPanel({
         return;
       }
       const updatedEta = (accepted.eta_minutes || 10) + 5;
-      const res = await fetch(`/api/sos/${accepted.packet_id}/status`, {
+      const res = await authFetch(`/api/sos/${accepted.packet_id}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -161,14 +162,14 @@ export default function DemoControlPanel({
   const handleSendForgedMessage = async () => {
     setBusyAction('forgedMessage');
     try {
-      const listRes = await fetch('/api/sos/list');
+      const listRes = await authFetch('/api/sos/list');
       const list = await listRes.json();
       if (!list || list.length === 0) {
         alert('No SOS reports available.');
         return;
       }
       const target = list[0];
-      const res = await fetch(`/api/demo/tamper-downlink/${target.packet_id}?tamper_type=corrupt_signature`, {
+      const res = await authFetch(`/api/demo/tamper-downlink/${target.packet_id}?tamper_type=corrupt_signature`, {
         method: 'POST',
       });
       const data = await res.json();

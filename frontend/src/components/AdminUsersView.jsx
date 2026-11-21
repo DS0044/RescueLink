@@ -18,6 +18,7 @@ import {
   UserCheck,
   UserX,
 } from 'lucide-react';
+import { authFetch } from '../utils/auth';
 
 export default function AdminUsersView({ currentUser, onNavigate }) {
   const [activeTab, setActiveTab] = useState('users'); // 'users' or 'audit'
@@ -37,7 +38,7 @@ export default function AdminUsersView({ currentUser, onNavigate }) {
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/users');
+      const res = await authFetch('/api/admin/users');
       if (res.ok) {
         setUsers(await res.json());
       }
@@ -50,7 +51,7 @@ export default function AdminUsersView({ currentUser, onNavigate }) {
 
   const fetchAuditLogs = async () => {
     try {
-      const res = await fetch('/api/admin/audit-logs');
+      const res = await authFetch('/api/admin/audit-logs');
       if (res.ok) {
         setAuditLogs(await res.json());
       }
@@ -72,7 +73,7 @@ export default function AdminUsersView({ currentUser, onNavigate }) {
   // Actions
   const handleApprove = async (userId) => {
     try {
-      const res = await fetch(`/api/admin/users/${userId}/approve`, { method: 'POST' });
+      const res = await authFetch(`/api/admin/users/${userId}/approve`, { method: 'POST' });
       if (res.ok) {
         showToast('User approved and activated successfully');
         fetchUsers();
@@ -86,7 +87,7 @@ export default function AdminUsersView({ currentUser, onNavigate }) {
   const handleReject = async (userId) => {
     if (!window.confirm('Are you sure you want to reject/disable this user account?')) return;
     try {
-      const res = await fetch(`/api/admin/users/${userId}/reject`, { method: 'POST' });
+      const res = await authFetch(`/api/admin/users/${userId}/reject`, { method: 'POST' });
       if (res.ok) {
         showToast('User account rejected');
         fetchUsers();
@@ -100,7 +101,7 @@ export default function AdminUsersView({ currentUser, onNavigate }) {
   const handleToggleStatus = async (userId, currentStatus) => {
     const nextStatus = currentStatus === 'active' ? 'disabled' : 'active';
     try {
-      const res = await fetch(`/api/admin/users/${userId}/status`, {
+      const res = await authFetch(`/api/admin/users/${userId}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus }),
@@ -117,7 +118,7 @@ export default function AdminUsersView({ currentUser, onNavigate }) {
 
   const handleRoleChange = async (userId, newRole) => {
     try {
-      const res = await fetch(`/api/admin/users/${userId}/role`, {
+      const res = await authFetch(`/api/admin/users/${userId}/role`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role: newRole }),
@@ -138,7 +139,7 @@ export default function AdminUsersView({ currentUser, onNavigate }) {
       return;
     }
     try {
-      const res = await fetch(`/api/admin/users/${user.id}/reset-password`, { method: 'POST' });
+      const res = await authFetch(`/api/admin/users/${user.id}/reset-password`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setResetModalData({
