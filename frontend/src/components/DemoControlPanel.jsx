@@ -15,6 +15,9 @@ import {
   CheckCircle2,
   Clock,
   Zap,
+  FastForward,
+  ShieldX,
+  Navigation,
 } from 'lucide-react';
 
 export default function DemoControlPanel({
@@ -32,6 +35,8 @@ export default function DemoControlPanel({
   const [linkMode, setLinkMode] = useState(channelStatus?.mode || 'SIMULATED');
   const [busyAction, setBusyAction] = useState(null);
   const [actionFeedback, setActionFeedback] = useState('');
+  const [simSpeed, setSimSpeed] = useState(10); // 1, 10, 60
+  const [lastSimulatedId, setLastSimulatedId] = useState('SOS-9001');
 
   const handleApplyConfig = async (newDelay, newLoss, newMode) => {
     const d = newDelay !== undefined ? newDelay : delayMs;
@@ -53,6 +58,122 @@ export default function DemoControlPanel({
       const res = await fn();
       setActionFeedback(res?.message || 'Operation executed successfully');
       setTimeout(() => setActionFeedback(''), 4000);
+    } catch (err) {
+      setActionFeedback(`Error: ${err.message}`);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  // Simulate mission accelerator
+  const handleSimulateMission = async () => {
+    setBusyAction('simulateMission');
+    try {
+      // Find an SOS or pick first from list
+      const listRes = await fetch('/api/sos/list');
+      const list = await listRes.json();
+      if (!list || list.length === 0) {
+        alert('Please seed or send an SOS first before simulating a mission.');
+        return;
+      }
+      const target = list[0];
+      setLastSimulatedId(target.packet_id);
+
+      const res = await fetch(`/api/demo/simulate-mission/${target.packet_id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ speed: simSpeed }),
+      });
+      const data = await res.json();
+      setActionFeedback(data.message || `Mission simulated at ${simSpeed}x speed!`);
+      setTimeout(() => setActionFeedback(''), 5000);
+    } catch (err) {
+      setActionFeedback(`Mission simulation error: ${err.message}`);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  // Quick action: Accept with ETA 12 min
+  const handleQuickAccept = async () => {
+    setBusyAction('quickAccept');
+    try {
+      const listRes = await fetch('/api/sos/list');
+      const list = await listRes.json();
+      const pending = list.find((r) => r.status === 'pending') || list[0];
+      if (!pending) {
+        alert('No active SOS to accept.');
+        return;
+      }
+      const res = await fetch(`/api/sos/${pending.packet_id}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          responder_id: 'RESP-NDRF-01',
+          responder_name: 'Capt. A. Sharma (NDRF)',
+          eta_minutes: 12,
+          team_type: 1, // Boat
+          note_code: 1, // Stay where you are
+        }),
+      });
+      const data = await res.json();
+      setActionFeedback(`SOS ${pending.packet_id} accepted with ETA: 12 min (Boat Team)!`);
+      setTimeout(() => setActionFeedback(''), 4000);
+    } catch (err) {
+      setActionFeedback(`Error: ${err.message}`);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  // Quick action: Send ETA update (+5 min delay)
+  const handleSendEtaUpdate = async () => {
+    setBusyAction('etaUpdate');
+    try {
+      const listRes = await fetch('/api/sos/list');
+      const list = await listRes.json();
+      const accepted = list.find((r) => r.status === 'accepted' || r.status === 'en_route') || list[0];
+      if (!accepted) {
+        alert('Please accept an SOS first to update its ETA.');
+        return;
+      }
+      const updatedEta = (accepted.eta_minutes || 10) + 5;
+      const res = await fetch(`/api/sos/${accepted.packet_id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'eta_updated',
+          eta_minutes: updatedEta,
+          note_text: 'Delayed by water flow (+5 min)',
+        }),
+      });
+      const data = await res.json();
+      setActionFeedback(`ETA updated to ~${updatedEta} min for ${accepted.packet_id}`);
+      setTimeout(() => setActionFeedback(''), 4000);
+    } catch (err) {
+      setActionFeedback(`Error: ${err.message}`);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  // Quick action: Send forged downlink message
+  const handleSendForgedMessage = async () => {
+    setBusyAction('forgedMessage');
+    try {
+      const listRes = await fetch('/api/sos/list');
+      const list = await listRes.json();
+      if (!list || list.length === 0) {
+        alert('No SOS reports available.');
+        return;
+      }
+      const target = list[0];
+      const res = await fetch(`/api/demo/tamper-downlink/${target.packet_id}?tamper_type=corrupt_signature`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      setActionFeedback('Forged downlink dispatched! Open /victim to see cryptographic rejection badge.');
+      setTimeout(() => setActionFeedback(''), 5000);
     } catch (err) {
       setActionFeedback(`Error: ${err.message}`);
     } finally {
@@ -102,45 +223,122 @@ export default function DemoControlPanel({
         )}
       </div>
 
-      {/* Message Journey Timeline Card */}
+      {/* SPEC SECTION 6: RESCUE MISSION ACCELERATOR */}
       <div className="card">
-        <div className="card-header" style={{ marginBottom: '16px' }}>
+        <div className="card-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Activity className="w-5 h-5 text-orange-500" />
-            <h3 className="card-header-title">Message Journey Architecture Flow</h3>
+            <FastForward className="w-5 h-5 text-orange-500" />
+            <h3 className="card-header-title">Mission Accelerator & Downlink Controls</h3>
           </div>
-          <span className="text-helper">Live transmission path verification</span>
+          <span className="badge-priority p2">SIMULATION ACCELERATOR</span>
         </div>
 
-        <div className="journey-nodes-row">
+        <p className="text-helper" style={{ marginBottom: '16px' }}>
+          Automatically step through the full lifecycle: <strong>Pending &gt; Accepted &gt; En Route &gt; Arriving Soon (&lt;5m) &gt; Arrived</strong>. Accelerate time so evaluators can inspect every signed downlink update in under 60 seconds.
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '16px' }}>
+          <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-default)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>Speed Multiplier</span>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {[1, 10, 60].map((spd) => (
+                <button
+                  key={spd}
+                  type="button"
+                  onClick={() => setSimSpeed(spd)}
+                  className={`btn ${simSpeed === spd ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ height: '32px', fontSize: '12px', flex: 1, padding: 0 }}
+                >
+                  {spd}x
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-default)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <button
+              type="button"
+              disabled={busyAction === 'simulateMission'}
+              onClick={handleSimulateMission}
+              className="btn btn-primary"
+              style={{ height: '42px', fontWeight: 700 }}
+            >
+              <Play className="w-4 h-4" />
+              <span>{busyAction === 'simulateMission' ? 'Accelerating...' : 'Simulate Rescue Mission'}</span>
+            </button>
+          </div>
+
+          <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-default)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <button
+              type="button"
+              disabled={busyAction === 'quickAccept'}
+              onClick={handleQuickAccept}
+              className="btn btn-secondary"
+              style={{ height: '42px', fontSize: '12px' }}
+            >
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span>Accept with ETA 12 min</span>
+            </button>
+          </div>
+
+          <div style={{ padding: '12px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-default)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <button
+              type="button"
+              disabled={busyAction === 'forgedMessage'}
+              onClick={handleSendForgedMessage}
+              className="btn btn-danger"
+              style={{ height: '42px', fontSize: '12px' }}
+            >
+              <ShieldX className="w-4 h-4" />
+              <span>Send Forged Message</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Horizontal Message Journey Timeline */}
+      <div className="card">
+        <div className="card-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Activity className="w-5 h-5 text-orange-500" />
+            <h3 className="card-header-title">Live Message Journey Pipeline</h3>
+          </div>
+          <span className="text-helper">Full bidirectional traversal: Victim SOS (21B) &rarr; Gateway &rarr; IECE &rarr; Responder &rarr; Downlink (80B)</span>
+        </div>
+
+        <div className="journey-timeline-row">
           {journeyStages.map((stg, idx) => {
             const Icon = stg.icon;
-            const isCurrent = activeStep === idx + 1;
+            const isPassed = idx < 6;
             return (
-              <div
-                key={stg.id}
-                className={`journey-node-box ${isCurrent ? 'active' : ''}`}
-              >
-                <Icon className={`w-5 h-5 ${isCurrent ? 'text-orange-500' : 'text-slate-400'}`} />
-                <div className="journey-node-title">{stg.label}</div>
-                <div className="journey-node-sub">{stg.desc}</div>
-              </div>
+              <React.Fragment key={stg.id}>
+                <div className={`journey-node ${isPassed ? 'active' : ''}`}>
+                  <div className="journey-node-icon">
+                    <Icon className="w-4 h-4" />
+                  </div>
+                  <span className="journey-node-label">{stg.label}</span>
+                  <span className="journey-node-sub">{stg.desc}</span>
+                </div>
+                {idx < journeyStages.length - 1 && (
+                  <div className={`journey-connector ${isPassed ? 'active' : ''}`} />
+                )}
+              </React.Fragment>
             );
           })}
         </div>
       </div>
 
-      {/* Scripted Walkthrough Sequence Grid */}
+      {/* Numbered Step-by-Step Scripted Walkthrough */}
       <div className="card">
         <div className="card-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Play className="w-5 h-5 text-orange-500" />
-            <h3 className="card-header-title">Scripted Evaluator Walkthrough</h3>
+            <CheckCircle2 className="w-5 h-5 text-orange-500" />
+            <h3 className="card-header-title">Scripted Evaluator Sequence</h3>
           </div>
-          <span className="text-helper">Click each step to guide evaluator evaluation</span>
+          <span className="text-helper">Click each step in order for a guided demonstration</span>
         </div>
 
-        <div className="scripted-steps-grid">
+        <div className="step-grid">
           <button
             type="button"
             onClick={() => onTriggerScriptedStep(1)}
@@ -148,8 +346,8 @@ export default function DemoControlPanel({
           >
             <div className="step-number-badge">1</div>
             <div className="step-content">
-              <span className="step-title">Send Victim SOS</span>
-              <span className="step-desc">Encodes survival telemetry into exact 21-byte binary packet.</span>
+              <span className="step-title">1. Victim Sends SOS</span>
+              <span className="step-desc">Simulates a victim trapped in flood sending a 21-byte packet.</span>
             </div>
           </button>
 
@@ -160,8 +358,8 @@ export default function DemoControlPanel({
           >
             <div className="step-number-badge">2</div>
             <div className="step-content">
-              <span className="step-title">Inspect 21B Packet</span>
-              <span className="step-desc">Inspect raw hex and byte-by-byte struct breakdown.</span>
+              <span className="step-title">2. LoRa Propagation</span>
+              <span className="step-desc">Transmits CSS SF10 chirp over 868MHz with simulated ToA delay.</span>
             </div>
           </button>
 
@@ -172,8 +370,8 @@ export default function DemoControlPanel({
           >
             <div className="step-number-badge">3</div>
             <div className="step-content">
-              <span className="step-title">Open Triage Dashboard</span>
-              <span className="step-desc">Live OpenStreetMap with priority triage & duplicate clusters.</span>
+              <span className="step-title">3. IECE Engine Triage</span>
+              <span className="step-desc">Decode 21B struct, evaluate P1-P4 priority, check deduplication.</span>
             </div>
           </button>
 
@@ -184,8 +382,8 @@ export default function DemoControlPanel({
           >
             <div className="step-number-badge">4</div>
             <div className="step-content">
-              <span className="step-title">Responder Acceptance</span>
-              <span className="step-desc">Authorize commander and generate Ed25519 digital signature.</span>
+              <span className="step-title">4. Open Rescue Map</span>
+              <span className="step-desc">Incident plotted on live dark map with priority color badge.</span>
             </div>
           </button>
 
@@ -196,8 +394,8 @@ export default function DemoControlPanel({
           >
             <div className="step-number-badge">5</div>
             <div className="step-content">
-              <span className="step-title">Verify Signed Ack</span>
-              <span className="step-desc">Victim terminal validates Ed25519 signature in browser.</span>
+              <span className="step-title">5. Accept & Ed25519 Sign</span>
+              <span className="step-desc">Commander accepts; backend generates 80B signed downlink.</span>
             </div>
           </button>
 
@@ -208,8 +406,8 @@ export default function DemoControlPanel({
           >
             <div className="step-number-badge" style={{ backgroundColor: '#DC2626' }}>6</div>
             <div className="step-content">
-              <span className="step-title">Test Tampered Ack</span>
-              <span className="step-desc">Verify forged or modified payloads are cryptographically rejected.</span>
+              <span className="step-title">6. Test Tampered Ack</span>
+              <span className="step-desc">Verify forged payloads are cryptographically rejected.</span>
             </div>
           </button>
         </div>

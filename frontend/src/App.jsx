@@ -20,8 +20,16 @@ import DashboardView from './components/DashboardView';
 import DemoControlPanel from './components/DemoControlPanel';
 import AboutHonestyModal from './components/AboutHonestyModal';
 
+const getInitialView = () => {
+  const path = window.location.pathname.toLowerCase();
+  if (path.includes('dashboard')) return 'dashboard';
+  if (path.includes('victim')) return 'victim';
+  if (path.includes('demo')) return 'demo';
+  return 'landing';
+};
+
 export default function App() {
-  const [activeView, setActiveView] = useState('landing'); // 'landing', 'victim', 'dashboard', 'demo'
+  const [activeView, setActiveView] = useState(getInitialView);
   const [reports, setReports] = useState([]);
   const [groups, setGroups] = useState([]);
   const [stats, setStats] = useState(null);
@@ -31,6 +39,23 @@ export default function App() {
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [activeScriptedStep, setActiveScriptedStep] = useState(null);
   const [toastMessage, setToastMessage] = useState('');
+
+  const navigateTo = (view) => {
+    setActiveView(view);
+    const targetPath = view === 'landing' ? '/' : `/${view}`;
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState({}, '', targetPath);
+    }
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveView(getInitialView());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
 
   const showToast = (msg) => {
     setToastMessage(msg);
