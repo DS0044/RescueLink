@@ -165,8 +165,8 @@
 
 .sos-card-item.selected {
   border-color: var(--accent-orange);
-  box-shadow: 0 0 12px var(--accent-orange-glow);
-  background-color: rgba(255, 106, 26, 0.05);
+  box-shadow: 0 0 14px var(--accent-orange-glow);
+  background-color: rgba(255, 106, 26, 0.08);
 }
 
 .sos-card-top {
@@ -210,6 +210,41 @@
   background-color: #0F172A;
 }
 
+.map-actions-overlay {
+  position: absolute;
+  top: 16px;
+  left: 60px;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.map-action-pill {
+  background-color: rgba(18, 26, 47, 0.94);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  border-radius: var(--radius-pill);
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-shadow: var(--shadow-sm);
+}
+
+.map-action-pill:hover {
+  border-color: var(--accent-orange);
+  color: var(--accent-orange);
+  transform: translateY(-1px);
+}
+
 .map-legend-overlay {
   position: absolute;
   top: 16px;
@@ -241,7 +276,57 @@
   flex-shrink: 0;
 }
 
-/* Slide-in Detail Drawer / Modal */
+/* Marker Pulse & Dim Effects */
+@keyframes marker-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 106, 26, 0.8);
+  }
+  70% {
+    box-shadow: 0 0 0 16px rgba(255, 106, 26, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 106, 26, 0);
+  }
+}
+
+.selected-marker-pulse {
+  animation: marker-pulse 1.8s infinite;
+  z-index: 1000 !important;
+}
+
+.dimmed-marker {
+  opacity: 0.35 !important;
+  transition: opacity 0.25s ease;
+}
+
+/* Offline Grid Fallback */
+.offline-grid-overlay {
+  position: absolute;
+  inset: 0;
+  background-color: #0A0F1E;
+  background-image: 
+    linear-gradient(rgba(34, 48, 82, 0.45) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 48, 82, 0.45) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 390;
+}
+
+.offline-scale-badge {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  z-index: 500;
+  background-color: rgba(18, 26, 47, 0.92);
+  border: 1px solid var(--border-default);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Slide-in Detail Drawer / Bottom Sheet */
 .detail-drawer {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-default);
@@ -251,4 +336,100 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.location-drawer-panel {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.location-coord-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.location-coord-text {
+  font-family: var(--font-family-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: #FFFFFF;
+  letter-spacing: 0.02em;
+}
+
+.location-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .location-metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.location-metric-box {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.location-export-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-export-ghost {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-surface);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all var(--transition-fast);
+}
+
+.btn-export-ghost:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background-color: var(--bg-surface-elevated);
+}
+
+/* Mobile Bottom Sheet */
+@media (max-width: 768px) {
+  .detail-drawer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-height: 85vh;
+    overflow-y: auto;
+    z-index: 1100;
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.7);
+    border-bottom: none;
+  }
 }
