@@ -10,15 +10,26 @@ During severe natural disasters (floods, cyclones, earthquakes), cellular towers
 
 ### 🎬 Scenario Demonstrated Live to Evaluators:
 1. **Victim in Flood Basin**: Trapped with zero cellular coverage. The victim initiates an SOS on the terminal.
-2. **IECE Binary Packing**: The emergency condition, people count, GNSS coordinates, and fix age are compressed into an exact **21-byte compact struct**.
+2. **IECE Binary Packing**: The emergency condition, people count, GNSS coordinates, and fix age are compressed into an exact **21-byte compact struct** (`>B I i i B H B I`).
 3. **LoRa Uplink Transmission**: The 21-byte binary packet is transmitted over a low-power LoRa channel (868.1 MHz, CSS SF10 BW125).
 4. **IECE Processing Engine**:
    - **Triage Priority Preemption**: Life-threatening conditions (e.g. cardiac arrest P1) preempt the queue ahead of non-critical reports (P3/P4).
    - **Spatial Cluster Grouping**: Reports within a 50-meter radius sharing an emergency condition are auto-grouped into an aggregated cluster card (*"7 people need assistance here"*), preventing dispatch fragmentation.
-5. **Rescue Dashboard Map**: Incidents appear in real-time on an interactive OpenStreetMap Leaflet dashboard with color-coded priority markers and grouped count badges.
-6. **Authorized Responder Triage**: An authenticated disaster commander (e.g. *Capt. A. Sharma, NDRF 4th Battalion*) accepts the rescue mission.
-7. **Ed25519 Signed Acknowledgement**: The backend generates an asymmetric digital signature using the commander's private key and sends it over the LoRa downlink.
-8. **Victim Cryptographic Verification**: The victim's terminal verifies the Ed25519 signature against the responder's public key before displaying *"Help accepted by Capt. A. Sharma (NDRF)"*. If an acknowledgement is forged or tampered with, the terminal actively rejects it and remains in **Pending** status.
+5. **Rescue Dashboard Map & Location Selection**:
+   - Incidents appear in real-time on an interactive Leaflet dashboard with color-coded priority markers and grouped count badges.
+   - Clicking an incident in the list or on the map smoothly flies the camera to the victim's location, highlights the marker with a pulsing ring, dims other markers, draws an **accuracy/uncertainty circle** scaling with GPS age, and displays an offline direct vector line from the rescue base station.
+6. **Authorized Responder Triage & Acceptance**:
+   - An authenticated disaster commander (e.g. *Capt. A. Sharma, NDRF 4th Battalion*) accepts the rescue mission.
+   - The commander selects the deployment team type (Boat, Ambulance, Fire/Rescue, Helicopter, Foot patrol).
+   - The engine auto-calculates the estimated arrival time (**ETA in minutes**) using the **Haversine formula** based on straight-line distance and team speed.
+7. **Compact Signed Downlink Message (16B + 64B Ed25519)**:
+   - The backend builds an ultra-compact **16-byte downlink frame** (`>B I B H B H I B`) containing status code, ETA, team type, and instruction note code.
+   - An asymmetric digital signature (64 bytes) is appended using the commander's Ed25519 private key (total 80 bytes).
+8. **Live Mission Lifecycle Updates to Victim**:
+   - The victim terminal independently verifies the Ed25519 signature before displaying: *"Help accepted by Boat Rescue Team (Capt. A. Sharma). Estimated arrival: 12 min."*
+   - As the mission advances, the responder sends signed updates through the state machine: **En Route** &rarr; **Arriving Soon (&lt;5 min)** &rarr; **Arrived**.
+   - The victim terminal maintains a live countdown timer marked *(estimated)*, sounds gentle Web Audio alert chimes, triggers haptic vibrations, and displays commander instruction notes.
+   - If an acknowledgement is forged or tampered with, the terminal actively rejects it and remains in **Pending** status.
 
 ---
 
@@ -45,22 +56,22 @@ flowchart TD
     end
 
     subgraph Dashboard["Rescue Command Dashboard (React + Leaflet)"]
-        B4 -->|"Live WebSocket"| D1["Interactive OpenStreetMap"]
-        D1 --> D2["Color-Coded Priority Markers"]
-        D1 --> D3["Cluster Group Cards"]
-        D2 --> D4["21-Byte Packet Hex Breakdown"]
+        B4 -->|"Live WebSocket"| D1["Interactive OpenStreetMap & Offline Grid"]
+        D1 --> D2["Selection: FlyTo + Pulsing Ring + Uncertainty Circle"]
+        D1 --> D3["Location Panel: Monospace Coords + Bearing + GPX Export"]
     end
 
     subgraph Responder["Authorized Commander Authentication"]
-        D4 --> R1["Authorized Responder Login"]
-        R1 -->|"Accept SOS"| R2["Ed25519 Digital Signer (Private Key)"]
+        D3 --> R1["Authorized Responder Login"]
+        R1 -->|"Accept SOS with Haversine ETA"| R2["Mission State Machine (En Route > Arriving > Arrived)"]
+        R2 --> R3["Ed25519 Digital Signer (Private Key)"]
     end
 
-    subgraph Downlink["Verified Acknowledgement Downlink"]
-        R2 -->|"Signed Ack Payload + Sig Hex + PubKey"| L2["LoRa Downlink Transmission"]
+    subgraph Downlink["Verified Acknowledgement Downlink (80 Bytes)"]
+        R3 -->|"16B Downlink Payload + 64B Ed25519 Sig"| L2["LoRa Downlink Transmission"]
         L2 --> V4["Victim Terminal Client-Side Verification"]
-        V4 -->|"Signature Valid"| V5["'Help Accepted by NDRF Commander'"]
-        V4 -->|"Signature Invalid (Tampered)"| V6["'TAMPER DETECTED: Forgery Rejected'"]
+        V4 -->|"Signature Valid"| V5["'Help Accepted: ETA Countdown + Live Updates'"]
+        V4 -->|"Signature Invalid (Tampered)"| V6["'FORGED MESSAGE REJECTED'"]
     end
 ```
 
@@ -72,180 +83,80 @@ In compliance with the hackathon rules and honest engineering practices:
 
 | Subsystem | Demo Status | Technical Implementation Details |
 |---|---|---|
-| **IECE 21-Byte Binary Packet** | **100% REAL** | Exact binary `struct` (`>B I i i B H B I`), microdegree coordinates, bitwise nibble packing for emergency type and severity. Zero JSON overhead over the air. |
-| **IECE Priority Queue** | **100% REAL** | Preemptive heap queue where P1 (cardiac) preempts P3 (stranded) regardless of timestamp arrival order. |
-| **IECE Duplicate Grouping** | **100% REAL** | Haversine distance spatial clustering (&lt;50m default) with time window validation. Preserves 100% of individual child records. |
+| **IECE 21-Byte Uplink Packet** | **100% REAL** | Exact binary `struct` (`>B I i i B H B I`), microdegree coordinates, bitwise nibble packing for emergency type and severity. Zero JSON overhead over the air. |
+| **IECE 16-Byte Downlink Packet** | **100% REAL** | Compact binary `struct` (`>B I B H B H I B`) with status codes, team types, ETA minutes, and instruction note codes. |
 | **Ed25519 Cryptographic Signatures** | **100% REAL** | Asymmetric Ed25519 keypairs. Responders sign with private keys; browser client independently verifies using `@noble/ed25519` and Web Crypto API. |
-| **Rescue Map & Dashboard** | **100% REAL** | Live React + Leaflet + OpenStreetMap with custom priority SVG markers and WebSocket real-time feeds. |
+| **Haversine Distance & ETA Engine** | **100% REAL** | Great Circle distance calculation against rescue base station with deployment speeds (Boat 20 km/h, Ambulance 40 km/h, Fire 35 km/h, Heli 150 km/h, Foot 5 km/h). |
+| **Map Selection & Uncertainty Circle** | **100% REAL** | Smooth `flyTo`, pulsing highlight ring, 40% background dimming, dynamic accuracy circle scaling with GPS age, compass bearing calculation, and GPX/KML waypoint generation. |
 | **LoRa Physical Channel** | **SOFTWARE SIMULATED** | Includes realistic Time-on-Air (650ms), adjustable packet loss (0-80%), jitter, and synthetic RSSI/SNR metrics. *(Labeled with **SIMULATED LINK** badge)*. |
 | **Physical Hardware Gateway** | **SUPPORTED** | Optional ESP32 + Semtech SX1276 firmware (C++) and Python USB serial bridge are included in `firmware/`. |
 | **Direct Satellite Link** | **ROADMAP / FUTURE** | HANDHELD DIRECT SATELLITE COMMS IS NOT YET IMPLEMENTED. Handheld nodes communicate over terrestrial LoRa to gateways. Gateway satellite backhaul (Astrocast/Iridium/NavIC) is modeled for future isolated mesh deployments. |
 
 ---
 
-## 📦 IECE Compact 21-Byte Packet Specification
+## 📦 Packet Binary Layouts
 
-```
-0                   1                   2                   3
-0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-| Ver  | Flags  |               Victim Device ID                |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|       Victim Device ID (cont) |          Latitude             |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|     Latitude (microdegrees)   |          Longitude            |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|     Longitude (microdegrees)  | Type | Sev   |  GPS Age (Sec) |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-| GPS Age (cont)| People Count  |           Timestamp           |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                    Timestamp (cont)           |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
+### Uplink Packet (21 Bytes)
+Detailed specification in [docs/PACKET_FORMAT.md](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/PACKET_FORMAT.md).
+- Format: `>B I i i B H B I`
+- 1B Version/Flags, 4B Victim ID, 4B Latitude (microdegrees), 4B Longitude (microdegrees), 1B Type+Severity, 2B GPS Fix Age, 1B People Count, 4B Timestamp.
 
-| Byte Offset | Size | Field Name | Binary Format | Description |
-|---|---|---|---|---|
-| `0` | 1 Byte | Version & Flags | `uint8` (`ver:4b, flags:4b`) | Protocol v1. Bit 0: Simulated channel indicator. |
-| `1-4` | 4 Bytes | Victim Node ID | `uint32 BE` | Unique 32-bit hardware device ID. |
-| `5-8` | 4 Bytes | Latitude | `int32 BE` | Microdegrees (`latitude * 1,000,000`). |
-| `9-12` | 4 Bytes | Longitude | `int32 BE` | Microdegrees (`longitude * 1,000,000`). |
-| `13` | 1 Byte | Type & Severity | `uint8` (`type:4b, sev:4b`) | High nibble: Emergency type (1-6). Low nibble: Priority (P1-P4). |
-| `14-15` | 2 Bytes | GPS Fix Age | `uint16 BE` | Seconds elapsed since last GNSS satellite fix lock. |
-| `16` | 1 Byte | People Count | `uint8` | Number of victims requiring extraction (1-255). |
-| `17-20` | 4 Bytes | Timestamp | `uint32 BE` | Unix epoch seconds. |
-| **TOTAL** | **21 Bytes** | — | — | **Exactly 21 Bytes / 42 Hex Characters** |
+### Downlink Acknowledgement & Status Packet (80 Bytes)
+Detailed specification in [docs/PACKET_FORMAT.md](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/PACKET_FORMAT.md).
+- Payload (16 Bytes): `>B I B H B H I B`
+  - 1B Version/Flags, 4B Victim ID, 1B Status Code, 2B ETA (minutes), 1B Team Type, 2B Responder ID, 4B Timestamp, 1B Instruction Note Code.
+- Signature (64 Bytes): Asymmetric Ed25519 signature over Bytes 0–15.
 
 ---
 
-## 🚀 Quickstart Guide
+## 🚀 Quickstart & Demo Walkthrough
 
-### Prerequisites
+### 1. Requirements
 - Python 3.10+
-- Node.js v18+ & npm
+- Node.js 18+
 
-### 1. Setup & Launch Backend
+### 2. Run Application
 ```bash
-# Activate virtual environment
-.\venv\Scripts\activate   # (Windows PowerShell)
-# or source venv/bin/activate (Linux/macOS)
-
-# Start FastAPI server on port 8000
-python -m uvicorn main:app --app-dir backend --port 8000 --host 0.0.0.0
+# Start backend server
+.\venv\Scripts\python -m uvicorn main:app --app-dir backend --port 8000 --host 0.0.0.0
 ```
-*The backend automatically serves the production frontend bundle at `http://localhost:8000` and API docs at `http://localhost:8000/docs`.*
 
-### 2. (Optional) Run Frontend in Hot-Reload Dev Mode
+### 3. Open Web Pages
+- 🏠 **Landing Page**: [http://localhost:8000/](http://localhost:8000/)
+- 🚨 **Victim SOS Terminal**: [http://localhost:8000/victim](http://localhost:8000/victim)
+- 🗺️ **Rescue Dashboard & Map**: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+- 🧪 **Demo Control Center**: [http://localhost:8000/demo](http://localhost:8000/demo)
+
+---
+
+## 📸 Feature Screenshots & Visual Deliverables
+
+All high-resolution responsive screenshots are available in [docs/design/](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/):
+
+### Rescue Dashboard Selection & Location Vectoring
+| Feature View | Screenshot File |
+|---|---|
+| **Selected SOS Marker & Live Popup** | [dashboard_selected_request_popup.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/dashboard_selected_request_popup.png) |
+| **Detail Drawer Location & Export Panel** | [dashboard_drawer_location_section.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/dashboard_drawer_location_section.png) |
+| **Clustered Group View & Sub-Victims** | [dashboard_group_view.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/dashboard_group_view.png) |
+| **Offline Tactical Grid Canvas Fallback** | [dashboard_offline_fallback.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/dashboard_offline_fallback.png) |
+
+### Victim Terminal Mission Lifecycle & Cryptographic Verification
+| State | Screenshot File |
+|---|---|
+| **Accepted by Responder (ETA 12m)** | [victim_status_accepted.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/victim_status_accepted.png) |
+| **En Route (Live Countdown Timer)** | [victim_status_enroute.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/victim_status_enroute.png) |
+| **Forged Message Rejected (Tamper Alert)** | [victim_tamper_rejected.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/victim_tamper_rejected.png) |
+
+---
+
+## 🧪 Automated Test Verification
+
+Run all test suites locally:
 ```bash
-cd frontend
-npm run dev
+# Unit tests for downlink encoding, Ed25519 crypto, and state transitions
+.\venv\Scripts\python backend/tests/test_downlink_packet.py
+
+# End-to-end integration lifecycle test suite (11/11 checks)
+.\venv\Scripts\python backend/tests/test_mission_lifecycle.py
 ```
-*Opens at `http://localhost:5173` with Vite proxy forwarding `/api` and `/ws` to port 8000.*
-
----
-
-## 🧪 Verification & Running Unit Tests
-
-To run the complete suite of 19 unit and integration tests:
-
-```bash
-# 1. Run IECE algorithmic unit tests (packet, priority queue, cluster grouping, Ed25519 crypto)
-.\venv\Scripts\python -m pytest backend/tests -o pythonpath=backend -v
-
-# 2. Run Live End-to-End API Integration Suite (all 11 integration steps)
-.\venv\Scripts\python backend/tests/test_live_api.py
-```
-
----
-
-## 🎯 Step-by-Step Scripted Demo for Evaluators
-
-Navigate to `http://localhost:8000` (or click the top navigation bar):
-
-### Step 1: Send a Real Emergency SOS
-1. Click **Victim SOS Terminal**.
-2. Select **Trapped in Flood (P2 - Urgent Rescue)**.
-3. Slide people count to **3**.
-4. Click **Use Live Browser GPS** (or leave default coordinates).
-5. Click **SEND EMERGENCY SOS NOW**.
-6. **Observation**: Notice the stepper transitions from `1. SENT` -> `2. GATEWAY RX` -> `3. PENDING`.
-7. Expand the **IECE Compact 21-Byte Packet Inspector** below to show the evaluator the raw 42-character hexadecimal string and the byte-by-byte struct breakdown.
-
-### Step 2: Show IECE Duplicate Grouping
-1. Click **Demo Control Panel** -> click **Generate 5 Nearby Flood SOS (Cluster Group)**.
-2. Switch to **Rescue Dashboard**.
-3. Under the **Cluster Groups** tab, click the newly formed group.
-4. **Observation**: Notice the group card reads *"8 people need assistance here (5 reports)"*, showing the centroid marker on the map with a single count badge while preserving all 5 individual victim reports.
-
-### Step 3: Show IECE Priority Preemption (P1 vs P3)
-1. Click **Demo Control Panel** -> click **Send Two Sample Emergencies (P1 vs P3)**.
-2. Switch to **Rescue Dashboard**.
-3. **Observation**: In the **IECE Priority Queue**, observe that the **Heart Attack (P1 - Life Threatening)** appears at the very top of the list, even though the Stranded (P3) emergency was queued first!
-
-### Step 4: Authorized Responder Acceptance & Ed25519 Signing
-1. On the **Rescue Dashboard**, click **Responder Login**.
-2. Authenticate as **Capt. A. Sharma (NDRF 4th Battalion)**.
-3. Click any pending emergency and click **Accept SOS & Sign Acknowledgement**.
-4. **Observation**: The status immediately updates to `ACCEPTED`, and an Ed25519 digital signature is generated.
-
-### Step 5: Cryptographic Verification at Victim Terminal
-1. Switch back to the **Victim SOS Terminal**.
-2. **Observation**: Notice the terminal automatically updates to **HELP ACCEPTED & RESCUE TEAM DISPATCHED** with a green shield badge verifying the responder name, ETA, and public key.
-
-### Step 6: Evaluator Tamper Test
-1. Inside the accepted card on the victim terminal, click **Tamper Acknowledgement**.
-2. **Observation**: The terminal actively rejects the tampered acknowledgement with **FORGED / TAMPERED ACKNOWLEDGEMENT REJECTED!** and reverts the status to **PENDING**. It proves to the evaluator that the victim terminal will NEVER display a false acceptance without a mathematically valid Ed25519 signature!
-
----
-
-## 📂 Repository Structure
-
-```
-RescueLink/
-├── backend/
-│   ├── iece/                       # Intelligent Emergency Communication Engine
-│   │   ├── packet.py               # Exact 21-byte struct encode/decode & byte explainer
-│   │   ├── priority.py             # Preemptive priority queue (P1-P4)
-│   │   ├── grouping.py             # Haversine spatial duplicate clustering (<50m)
-│   │   └── crypto.py               # Ed25519 keypairs, signing, verification & tampering
-│   ├── tests/
-│   │   ├── test_packet.py          # Packet size, round-trip, microdegrees tests
-│   │   ├── test_priority.py        # Priority sorting & FIFO ties tests
-│   │   ├── test_grouping.py        # Haversine & 5-report cluster tests
-│   │   ├── test_crypto.py          # Ed25519 sign, verify & tamper detection tests
-│   │   ├── test_api.py             # AsyncClient endpoint tests
-│   │   └── test_live_api.py        # End-to-end integration test runner
-│   ├── models.py                   # SQLAlchemy SQLite models (PostgreSQL compatible)
-│   ├── database.py                 # SQLite database connection & session setup
-│   ├── simulator.py                # LoRa physical layer delay & packet loss simulator
-│   ├── seed.py                     # Realistic disaster seed dataset generator
-│   └── main.py                     # FastAPI REST API, WebSockets & static file server
-├── frontend/                       # Modular React SPA (ready for Flutter port)
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── VictimView.jsx      # Mobile-friendly victim beacon & GPS fallback
-│   │   │   ├── DashboardView.jsx   # Leaflet map, cluster markers, triage queue & login
-│   │   │   ├── DemoControlPanel.jsx# Message journey timeline, channel loss sliders
-│   │   │   ├── PacketInspector.jsx # 21-byte visual hex & struct breakdown table
-│   │   │   └── AboutHonestyModal.jsx# Honesty disclosure & architecture audit
-│   │   ├── utils/
-│   │   │   └── crypto.js           # Client-side Ed25519 signature verification
-│   │   ├── App.jsx                 # Top-level view router & WebSocket manager
-│   │   └── index.css               # Dark theme, emergency orange accents
-│   ├── package.json
-│   └── vite.config.js
-├── firmware/                       # Optional physical ESP32 + LoRa + GNSS implementation
-│   ├── esp32_lora_sender/          # ESP32 C++ sender node (PlatformIO)
-│   ├── esp32_lora_gateway/         # ESP32 C++ gateway receiver (PlatformIO)
-│   ├── serial_bridge.py            # Python serial-to-HTTP gateway bridge
-│   └── README.md                   # Pinout wiring & flashing instructions
-└── README.md
-```
-
----
-
-## 🏆 Hackathon Alignment (ASTRA: Space, Navigation & Connectivity)
-
-1. **Navigation**: Native GNSS (GPS/NavIC) microdegree positioning with browser geolocation and offline manual fallback coordinates.
-2. **Connectivity**: Resilient off-grid communications replacing cellular infrastructure with sub-gigahertz LoRa (868/915 MHz).
-3. **Bandwidth Optimization**: 21-byte ultra-compact binary packing allows emergency data to fit in single low-power LoRa chirps with minimum Time-on-Air and battery consumption.
-4. **Satellite Gateway Integration**: Ground gateways are architected with serial and IP interfaces to interface with low-Earth orbit (LEO) satellite backhaul transceivers for planetary disaster resilience.
