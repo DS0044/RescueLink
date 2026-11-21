@@ -24,11 +24,18 @@ class SOSReportModel(Base):
     flags = Column(Integer, nullable=False, default=1)
     is_simulated = Column(Boolean, nullable=False, default=True)
     group_id = Column(String(64), nullable=True, index=True)
-    status = Column(String(32), nullable=False, default="pending")  # pending, accepted, resolved
+    status = Column(String(32), nullable=False, default="pending")  # pending, accepted, en_route, arriving_soon, arrived, closed, eta_updated, cancelled
     responder_id = Column(String(64), nullable=True)
     responder_name = Column(String(128), nullable=True)
     accepted_at = Column(BigInteger, nullable=True)
     eta_minutes = Column(Integer, nullable=True)
+
+    # Mission details
+    team_type = Column(Integer, nullable=True)
+    team_type_label = Column(String(64), nullable=True)
+    latest_note = Column(String(255), nullable=True)
+    delivery_status = Column(String(32), nullable=False, default="delivered")  # delivered, in_transit, failed
+    retry_count = Column(Integer, nullable=False, default=0)
 
     # Cryptographic fields
     ack_signature_hex = Column(Text, nullable=True)
@@ -37,7 +44,45 @@ class SOSReportModel(Base):
     ack_is_tampered = Column(Boolean, nullable=False, default=False)
     ack_tamper_reason = Column(String(255), nullable=True)
 
+    # Downlink binary packet
+    downlink_payload_hex = Column(String(64), nullable=True)
+    raw_downlink_hex = Column(Text, nullable=True)
+
     created_at = Column(BigInteger, nullable=False)
+
+
+class DownlinkMessageModel(Base):
+    __tablename__ = "downlink_messages"
+
+    message_id = Column(String(64), primary_key=True, index=True)
+    sos_id = Column(String(64), nullable=False, index=True)
+    seq_num = Column(Integer, nullable=False, default=1)
+    status = Column(String(32), nullable=False)  # accepted, en_route, arriving_soon, arrived, eta_updated, etc.
+    status_code = Column(Integer, nullable=False)
+    status_label = Column(String(64), nullable=False)
+    eta_minutes = Column(Integer, nullable=False, default=0)
+    team_type = Column(Integer, nullable=False, default=1)
+    team_type_label = Column(String(64), nullable=False)
+    responder_id = Column(String(64), nullable=False)
+    responder_name = Column(String(128), nullable=False)
+    note_code = Column(Integer, nullable=False, default=0)
+    note_text = Column(String(255), nullable=True)
+
+    # Cryptographic fields
+    payload_hex = Column(String(64), nullable=False)
+    signature_hex = Column(Text, nullable=False)
+    public_key_hex = Column(String(128), nullable=False)
+    raw_downlink_hex = Column(Text, nullable=False)
+
+    # Delivery tracking & retry state
+    delivery_status = Column(String(32), nullable=False, default="delivered")  # delivered, in_transit, failed
+    retry_count = Column(Integer, nullable=False, default=0)
+    max_retries = Column(Integer, nullable=False, default=3)
+    is_tampered = Column(Boolean, nullable=False, default=False)
+    tamper_reason = Column(String(255), nullable=True)
+
+    created_at = Column(BigInteger, nullable=False)
+    delivered_at = Column(BigInteger, nullable=True)
 
 
 class ClusterGroupModel(Base):

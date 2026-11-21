@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import init_db, get_db
-from models import SOSReportModel, ClusterGroupModel
+from models import SOSReportModel, ClusterGroupModel, DownlinkMessageModel
 from iece.packet import (
     EmergencyType,
     SeverityLevel,
@@ -26,6 +26,13 @@ from iece.packet import (
     decode_packet,
     explain_packet_bytes,
     DEFAULT_SEVERITY_MAP,
+    TeamType,
+    DownlinkPacket,
+    encode_downlink_packet,
+    decode_downlink_packet,
+    explain_downlink_packet_bytes,
+    calculate_suggested_eta,
+    haversine_distance_km,
 )
 from iece.priority import PrioritySOSQueue
 from iece.grouping import SOSGrouper
@@ -34,7 +41,20 @@ from iece.crypto import (
     create_signed_ack,
     verify_ack_signature,
     tamper_ack_payload,
+    create_signed_downlink_message,
+    verify_downlink_message,
+    tamper_downlink_message,
     DEFAULT_RESPONDERS,
+)
+from iece.state_machine import (
+    MissionStatus,
+    StatusCode,
+    STATUS_TO_CODE,
+    CODE_TO_STATUS,
+    VALID_TRANSITIONS,
+    validate_status_transition,
+    NOTE_PRESETS,
+    get_note_text,
 )
 from simulator import lora_simulator
 from seed import seed_database
@@ -178,6 +198,29 @@ class AcceptSOSRequest(BaseModel):
     responder_id: str
     responder_name: Optional[str] = None
     eta_minutes: Optional[int] = 15
+    team_type: Optional[int] = 1
+    note_code: Optional[int] = 0
+    note_text: Optional[str] = None
+
+
+class UpdateStatusRequest(BaseModel):
+    status: str
+    responder_id: Optional[str] = "RESP-NDRF-01"
+    responder_name: Optional[str] = None
+    eta_minutes: Optional[int] = None
+    team_type: Optional[int] = None
+    note_code: Optional[int] = None
+    note_text: Optional[str] = None
+
+
+class SimulateMissionRequest(BaseModel):
+    speed: Optional[int] = 10  # 1, 10, 60
+
+
+class DownlinkAckConfirmationRequest(BaseModel):
+    message_id: str
+    timestamp: Optional[int] = None
+
 
 
 class SimConfigRequest(BaseModel):
@@ -473,6 +516,13 @@ def list_sos_reports(db: Session = Depends(get_db)):
             "responder_name": r.responder_name,
             "accepted_at": r.accepted_at,
             "eta_minutes": r.eta_minutes,
+            "team_type": r.team_type or 1,
+            "team_type_label": r.team_type_label or TeamType.label(r.team_type or 1),
+            "latest_note": r.latest_note or "",
+            "delivery_status": r.delivery_status or "delivered",
+            "retry_count": r.retry_count or 0,
+            "downlink_payload_hex": r.downlink_payload_hex,
+            "raw_downlink_hex": r.raw_downlink_hex,
             "ack_signature_hex": r.ack_signature_hex,
             "ack_public_key_hex": r.ack_public_key_hex,
             "ack_is_tampered": r.ack_is_tampered,
@@ -485,7 +535,6 @@ def list_sos_reports(db: Session = Depends(get_db)):
 @app.get("/api/sos/groups")
 def list_groups(db: Session = Depends(get_db)):
     """List grouped cluster cards with nested reports."""
-    # Build complete response using current grouper state and DB
     groups = sos_grouper.list_groups()
     return groups
 
@@ -502,6 +551,14 @@ def get_sos_detail(sos_id: str, db: Session = Depends(get_db)):
         breakdown = explain_packet_bytes(raw_bytes)
     except Exception:
         pass
+
+    downlink_breakdown = []
+    if r.downlink_payload_hex:
+        try:
+            dl_bytes = bytes.fromhex(r.downlink_payload_hex)
+            downlink_breakdown = explain_downlink_packet_bytes(dl_bytes)
+        except Exception:
+            pass
 
     return {
         "packet_id": r.packet_id,
@@ -523,11 +580,199 @@ def get_sos_detail(sos_id: str, db: Session = Depends(get_db)):
         "responder_name": r.responder_name,
         "accepted_at": r.accepted_at,
         "eta_minutes": r.eta_minutes,
+        "team_type": r.team_type or 1,
+        "team_type_label": r.team_type_label or TeamType.label(r.team_type or 1),
+        "latest_note": r.latest_note or "",
+        "delivery_status": r.delivery_status or "delivered",
+        "retry_count": r.retry_count or 0,
+        "downlink_payload_hex": r.downlink_payload_hex,
+        "raw_downlink_hex": r.raw_downlink_hex,
         "ack_signature_hex": r.ack_signature_hex,
         "ack_public_key_hex": r.ack_public_key_hex,
         "ack_is_tampered": r.ack_is_tampered,
         "ack_tamper_reason": r.ack_tamper_reason,
         "breakdown": breakdown,
+        "downlink_breakdown": downlink_breakdown,
+    }
+
+
+async def record_and_dispatch_downlink(
+    report: SOSReportModel,
+    target_status: str,
+    eta_minutes: int,
+    team_type: int,
+    responder_id: str,
+    responder_name: str,
+    note_code: int = 0,
+    note_text: Optional[str] = None,
+    db: Session = None,
+) -> Dict[str, Any]:
+    """
+    Builds, signs with Ed25519, logs, persists, and transmits a compact 16B Downlink message over LoRa.
+    """
+    now = int(time.time())
+    responder = DEFAULT_RESPONDERS.get(responder_id) or DEFAULT_RESPONDERS["RESP-NDRF-01"]
+    keypair = responder["keypair"]
+
+    responder_num = 1 if "NDRF" in responder["id"] else 2
+    status_code = STATUS_TO_CODE.get(target_status, StatusCode.PENDING)
+    clean_note = get_note_text(note_code, note_text)
+
+    # 1. Encode 16-byte downlink payload
+    downlink_bytes = encode_downlink_packet(
+        victim_id=report.victim_id,
+        status_code=status_code,
+        eta_minutes=eta_minutes,
+        team_type=team_type,
+        responder_id_num=responder_num,
+        note_code=note_code,
+        timestamp=now,
+        is_simulated=report.is_simulated,
+    )
+
+    # 2. Digitally sign 16-byte payload using Ed25519 (80-byte radio frame)
+    signed_dl = create_signed_downlink_message(
+        downlink_bytes=downlink_bytes,
+        keypair=keypair,
+        metadata={
+            "sos_id": report.packet_id,
+            "victim_id": report.victim_id,
+            "status": target_status,
+            "status_label": StatusCode.label(status_code),
+            "eta_minutes": eta_minutes,
+            "team_type": team_type,
+            "team_type_label": TeamType.label(team_type),
+            "responder_id": responder["id"],
+            "responder_name": responder_name or responder["name"],
+            "note_text": clean_note,
+            "timestamp": now,
+        }
+    )
+
+    # 3. Transmit through LoRa simulator (delay, packet loss, and retry tracking)
+    tx_res = await lora_simulator.transmit_downlink_message(
+        downlink_bytes=downlink_bytes,
+        signed_msg={
+            "sos_id": report.packet_id,
+            "victim_id": report.victim_id,
+            "status": target_status,
+            "status_label": StatusCode.label(status_code),
+            "eta_minutes": eta_minutes,
+            "raw_downlink_hex": signed_dl["raw_downlink_hex"],
+        },
+        victim_id=report.victim_id,
+        attempt=1,
+    )
+
+    delivery_status = "delivered" if tx_res.get("delivered") else "in_transit"
+    retry_count = 0 if tx_res.get("delivered") else 1
+
+    # 4. Also generate backward-compatible signed_ack for existing endpoints
+    signed_ack = create_signed_ack(
+        sos_id=report.packet_id,
+        responder_id=responder["id"],
+        responder_name=responder_name or responder["name"],
+        timestamp=now,
+        keypair=keypair,
+        eta_minutes=eta_minutes,
+    )
+
+    existing_count = db.query(DownlinkMessageModel).filter_by(sos_id=report.packet_id).count()
+    seq_num = existing_count + 1
+    msg_id = f"DLM-{report.victim_id}-{now}-{seq_num}"
+
+    dl_model = DownlinkMessageModel(
+        message_id=msg_id,
+        sos_id=report.packet_id,
+        seq_num=seq_num,
+        status=target_status,
+        status_code=int(status_code),
+        status_label=StatusCode.label(status_code),
+        eta_minutes=eta_minutes,
+        team_type=team_type,
+        team_type_label=TeamType.label(team_type),
+        responder_id=responder["id"],
+        responder_name=responder_name or responder["name"],
+        note_code=note_code,
+        note_text=clean_note,
+        payload_hex=signed_dl["payload_hex"],
+        signature_hex=signed_dl["signature_hex"],
+        public_key_hex=signed_dl["public_key_hex"],
+        raw_downlink_hex=signed_dl["raw_downlink_hex"],
+        delivery_status=delivery_status,
+        retry_count=retry_count,
+        created_at=now,
+        delivered_at=now if delivery_status == "delivered" else None,
+    )
+    db.add(dl_model)
+
+    # 5. Update SOS Report entity
+    report.status = target_status
+    report.responder_id = responder["id"]
+    report.responder_name = responder_name or responder["name"]
+    report.eta_minutes = eta_minutes
+    report.team_type = team_type
+    report.team_type_label = TeamType.label(team_type)
+    report.latest_note = clean_note
+    report.delivery_status = delivery_status
+    report.retry_count = retry_count
+    report.downlink_payload_hex = signed_dl["payload_hex"]
+    report.raw_downlink_hex = signed_dl["raw_downlink_hex"]
+    report.ack_signature_hex = signed_ack["signature_hex"]
+    report.ack_public_key_hex = signed_ack["public_key_hex"]
+    report.ack_payload_json = json.dumps(signed_ack["payload"])
+    if target_status == "accepted" and not report.accepted_at:
+        report.accepted_at = now
+
+    # Propagate to cluster group if attached
+    if report.group_id:
+        cluster = sos_grouper.get_group(report.group_id)
+        if cluster:
+            cluster.status = target_status
+            cluster.responder_id = responder["id"]
+            cluster.responder_name = report.responder_name
+            if target_status == "accepted":
+                cluster.accepted_at = now
+        grp_db = db.query(ClusterGroupModel).filter_by(group_id=report.group_id).first()
+        if grp_db:
+            grp_db.status = target_status
+            grp_db.responder_id = responder["id"]
+            grp_db.responder_name = report.responder_name
+            if target_status == "accepted":
+                grp_db.accepted_at = now
+
+    db.commit()
+
+    breakdown = explain_downlink_packet_bytes(downlink_bytes)
+
+    # 6. Broadcast live WebSocket updates
+    event_type = "SOS_ACCEPTED" if target_status == "accepted" else ("ETA_UPDATED" if target_status == "eta_updated" else "STATUS_CHANGED")
+    await ws_manager.broadcast({
+        "type": event_type,
+        "sos_id": report.packet_id,
+        "victim_id": report.victim_id,
+        "status": target_status,
+        "status_label": StatusCode.label(status_code),
+        "eta_minutes": eta_minutes,
+        "team_type": team_type,
+        "team_type_label": TeamType.label(team_type),
+        "responder_name": report.responder_name,
+        "note_text": clean_note,
+        "delivery_status": delivery_status,
+        "signed_downlink": signed_dl,
+        "signed_ack": signed_ack,
+        "breakdown": breakdown,
+    })
+
+    return {
+        "status": target_status,
+        "sos_id": report.packet_id,
+        "message_id": msg_id,
+        "signed_downlink": signed_dl,
+        "signed_ack": signed_ack,
+        "breakdown": breakdown,
+        "delivery_status": delivery_status,
+        "tx_metrics": tx_res,
     }
 
 
@@ -539,82 +784,325 @@ async def accept_sos_report(
 ):
     """
     Authorized responder accepts an emergency SOS:
-    1. Validates responder identity.
-    2. Updates status to 'accepted'.
-    3. Signs an Ed25519 digital acknowledgement.
-    4. Simulates downlink transmission back to victim.
-    5. Broadcasts acceptance event.
+    1. Validates status transition from 'pending' to 'accepted'.
+    2. Builds 16-byte Downlink packet with team type and estimated arrival.
+    3. Signs an Ed25519 digital signature.
+    4. Transmits through LoRa downlink.
+    5. Saves state and broadcasts live update.
     """
     report = db.query(SOSReportModel).filter_by(packet_id=sos_id).first()
     if not report:
         raise HTTPException(status_code=404, detail="SOS report not found")
 
-    responder = DEFAULT_RESPONDERS.get(req.responder_id) or DEFAULT_RESPONDERS["RESP-NDRF-01"]
-    keypair = responder["keypair"]
-    now = int(time.time())
+    # Enforce state machine rules: only pending can be accepted (or re-accepted from cancelled)
+    is_valid, err_msg = validate_status_transition(report.status, "accepted")
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=err_msg)
 
-    # Create digitally signed acknowledgement
-    signed_ack = create_signed_ack(
-        sos_id=sos_id,
-        responder_id=responder["id"],
-        responder_name=req.responder_name or responder["name"],
-        timestamp=now,
-        keypair=keypair,
-        eta_minutes=req.eta_minutes or 15,
+    # Auto-calculate ETA if not provided using Haversine formula
+    team_type = req.team_type or 1
+    if req.eta_minutes is None:
+        eta_calc = calculate_suggested_eta(report.latitude, report.longitude, team_type=team_type)
+        eta_min = eta_calc["suggested_eta_minutes"]
+    else:
+        eta_min = req.eta_minutes
+
+    res = await record_and_dispatch_downlink(
+        report=report,
+        target_status="accepted",
+        eta_minutes=eta_min,
+        team_type=team_type,
+        responder_id=req.responder_id,
+        responder_name=req.responder_name,
+        note_code=req.note_code or 0,
+        note_text=req.note_text,
+        db=db,
     )
+    return res
 
-    # Transmit downlink over LoRa
-    await lora_simulator.transmit_downlink_ack(signed_ack)
 
-    # Update database
-    report.status = "accepted"
-    report.responder_id = responder["id"]
-    report.responder_name = req.responder_name or responder["name"]
-    report.accepted_at = now
-    report.eta_minutes = req.eta_minutes or 15
-    report.ack_signature_hex = signed_ack["signature_hex"]
-    report.ack_public_key_hex = signed_ack["public_key_hex"]
-    report.ack_payload_json = json.dumps(signed_ack["payload"])
-    report.ack_is_tampered = False
-    report.ack_tamper_reason = None
+@app.post("/api/sos/{sos_id}/status")
+async def update_sos_status(
+    sos_id: str,
+    req: UpdateStatusRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Authorized responder updates mission lifecycle status:
+    Accepted -> En Route -> Arriving Soon -> Arrived -> Closed.
+    Rejects invalid transition jumps with HTTP 400.
+    """
+    report = db.query(SOSReportModel).filter_by(packet_id=sos_id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="SOS report not found")
 
-    # Update Group status if group exists
-    if report.group_id:
-        cluster = sos_grouper.get_group(report.group_id)
-        if cluster:
-            cluster.status = "accepted"
-            cluster.responder_id = responder["id"]
-            cluster.responder_name = req.responder_name or responder["name"]
-            cluster.accepted_at = now
+    target_status = req.status.lower().strip()
+    is_valid, err_msg = validate_status_transition(report.status, target_status)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=err_msg)
 
-        grp_db = db.query(ClusterGroupModel).filter_by(group_id=report.group_id).first()
-        if grp_db:
-            grp_db.status = "accepted"
-            grp_db.responder_id = responder["id"]
-            grp_db.responder_name = req.responder_name or responder["name"]
-            grp_db.accepted_at = now
+    eta_min = req.eta_minutes if req.eta_minutes is not None else (report.eta_minutes or 0)
+    # Default ETA when arriving soon or arrived
+    if target_status == "arrived":
+        eta_min = 0
+    elif target_status == "arriving_soon" and eta_min > 5:
+        eta_min = 4
+
+    team_type = req.team_type or report.team_type or 1
+    note_code = req.note_code if req.note_code is not None else 0
+
+    res = await record_and_dispatch_downlink(
+        report=report,
+        target_status=target_status,
+        eta_minutes=eta_min,
+        team_type=team_type,
+        responder_id=req.responder_id or report.responder_id or "RESP-NDRF-01",
+        responder_name=req.responder_name or report.responder_name,
+        note_code=note_code,
+        note_text=req.note_text,
+        db=db,
+    )
+    return res
+
+
+@app.get("/api/sos/{sos_id}/messages")
+def get_sos_messages(sos_id: str, db: Session = Depends(get_db)):
+    """Downlink message history with cryptographic verification and delivery status."""
+    report = db.query(SOSReportModel).filter_by(packet_id=sos_id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="SOS report not found")
+
+    messages = db.query(DownlinkMessageModel).filter_by(sos_id=sos_id).order_by(DownlinkMessageModel.seq_num.asc()).all()
+    res = []
+    for m in messages:
+        breakdown = []
+        try:
+            p_bytes = bytes.fromhex(m.payload_hex)
+            breakdown = explain_downlink_packet_bytes(p_bytes)
+        except Exception:
+            pass
+
+        is_valid, reason = verify_downlink_message(
+            payload_bytes_or_hex=m.payload_hex,
+            signature_hex=m.signature_hex,
+            public_key_hex=m.public_key_hex,
+            is_tampered=m.is_tampered,
+            tamper_reason=m.tamper_reason,
+        )
+
+        res.append({
+            "message_id": m.message_id,
+            "sos_id": m.sos_id,
+            "seq_num": m.seq_num,
+            "status": m.status,
+            "status_code": m.status_code,
+            "status_label": m.status_label,
+            "eta_minutes": m.eta_minutes,
+            "team_type": m.team_type,
+            "team_type_label": m.team_type_label,
+            "responder_id": m.responder_id,
+            "responder_name": m.responder_name,
+            "note_code": m.note_code,
+            "note_text": m.note_text,
+            "payload_hex": m.payload_hex,
+            "signature_hex": m.signature_hex,
+            "public_key_hex": m.public_key_hex,
+            "raw_downlink_hex": m.raw_downlink_hex,
+            "delivery_status": m.delivery_status,
+            "retry_count": m.retry_count,
+            "is_tampered": m.is_tampered,
+            "tamper_reason": m.tamper_reason,
+            "is_valid": is_valid,
+            "verification_message": reason,
+            "created_at": m.created_at,
+            "delivered_at": m.delivered_at,
+            "breakdown": breakdown,
+        })
+    return res
+
+
+@app.post("/api/sos/{sos_id}/messages/{msg_id}/ack")
+async def acknowledge_downlink_message(sos_id: str, msg_id: str, db: Session = Depends(get_db)):
+    """Victim terminal confirms receipt of a downlink status message."""
+    msg = db.query(DownlinkMessageModel).filter_by(sos_id=sos_id, message_id=msg_id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Downlink message not found")
+
+    now = int(time.time())
+    msg.delivery_status = "delivered"
+    msg.delivered_at = now
+
+    report = db.query(SOSReportModel).filter_by(packet_id=sos_id).first()
+    if report:
+        report.delivery_status = "delivered"
 
     db.commit()
 
-    lora_simulator.log_event(
-        "RESPONDER_ACK",
-        f"Responder {responder['name']} accepted {sos_id}. Ed25519 signature generated.",
-        {"sos_id": sos_id, "signature": signed_ack["signature_hex"][:16] + "..."},
+    await ws_manager.broadcast({
+        "type": "MESSAGE_DELIVERED",
+        "sos_id": sos_id,
+        "message_id": msg_id,
+        "delivered_at": now,
+    })
+
+    return {"status": "confirmed", "message_id": msg_id, "delivered_at": now}
+
+
+@app.get("/api/sos/{sos_id}/eta-estimate")
+def get_eta_estimate(
+    sos_id: str,
+    team_type: int = Query(default=1, ge=1, le=5),
+    db: Session = Depends(get_db),
+):
+    """Calculates suggested ETA using Haversine Great Circle distance to rescue base station."""
+    report = db.query(SOSReportModel).filter_by(packet_id=sos_id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="SOS report not found")
+
+    return calculate_suggested_eta(
+        victim_lat=report.latitude,
+        victim_lon=report.longitude,
+        team_type=team_type,
     )
 
-    # Broadcast live update
-    await ws_manager.broadcast({
-        "type": "SOS_ACCEPTED",
+
+@app.post("/api/demo/simulate-mission/{sos_id}")
+async def simulate_rescue_mission(
+    sos_id: str,
+    req: SimulateMissionRequest = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Demo Simulator Accelerator:
+    Steps through En Route -> Arriving Soon -> Arrived with speed accelerator.
+    """
+    report = db.query(SOSReportModel).filter_by(packet_id=sos_id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="SOS report not found")
+
+    speed = req.speed if req and req.speed else 10
+    step_delay = 0.5 if speed >= 60 else (1.5 if speed >= 10 else 4.0)
+
+    # 1. If still pending, accept first
+    if report.status == "pending":
+        eta_data = calculate_suggested_eta(report.latitude, report.longitude, team_type=1)
+        await record_and_dispatch_downlink(
+            report=report,
+            target_status="accepted",
+            eta_minutes=eta_data["suggested_eta_minutes"],
+            team_type=1,
+            responder_id="RESP-NDRF-01",
+            responder_name="Capt. A. Sharma (NDRF 4th Battalion)",
+            note_code=1,
+            db=db,
+        )
+        await asyncio.sleep(step_delay)
+
+    # 2. Transition to En Route
+    if report.status in ("accepted", "eta_updated"):
+        en_route_eta = max(5, (report.eta_minutes or 12) - 3)
+        await record_and_dispatch_downlink(
+            report=report,
+            target_status="en_route",
+            eta_minutes=en_route_eta,
+            team_type=report.team_type or 1,
+            responder_id=report.responder_id or "RESP-NDRF-01",
+            responder_name=report.responder_name or "NDRF Team",
+            note_code=4,
+            db=db,
+        )
+        await asyncio.sleep(step_delay)
+
+    # 3. Transition to Arriving Soon (< 5 min)
+    if report.status == "en_route":
+        await record_and_dispatch_downlink(
+            report=report,
+            target_status="arriving_soon",
+            eta_minutes=4,
+            team_type=report.team_type or 1,
+            responder_id=report.responder_id or "RESP-NDRF-01",
+            responder_name=report.responder_name or "NDRF Team",
+            note_code=3,
+            db=db,
+        )
+        await asyncio.sleep(step_delay)
+
+    # 4. Transition to Arrived
+    if report.status == "arriving_soon":
+        await record_and_dispatch_downlink(
+            report=report,
+            target_status="arrived",
+            eta_minutes=0,
+            team_type=report.team_type or 1,
+            responder_id=report.responder_id or "RESP-NDRF-01",
+            responder_name=report.responder_name or "NDRF Team",
+            note_code=6,
+            db=db,
+        )
+
+    return {
+        "status": "completed",
+        "current_status": report.status,
         "sos_id": sos_id,
-        "group_id": report.group_id,
-        "responder_name": report.responder_name,
-        "signed_ack": signed_ack,
+        "message": f"Rescue mission simulated successfully at {speed}x speed. Status is now '{report.status}'.",
+    }
+
+
+@app.post("/api/demo/tamper-downlink/{sos_id}")
+async def tamper_downlink_demo(
+    sos_id: str,
+    tamper_type: str = Query(default="corrupt_signature"),
+    db: Session = Depends(get_db),
+):
+    """
+    Deliberately tampers the latest downlink message to demonstrate client-side signature rejection.
+    """
+    msg = db.query(DownlinkMessageModel).filter_by(sos_id=sos_id).order_by(DownlinkMessageModel.seq_num.desc()).first()
+    if not msg:
+        raise HTTPException(status_code=400, detail="Cannot tamper: no downlink messages exist for this SOS")
+
+    signed_msg = {
+        "payload_hex": msg.payload_hex,
+        "signature_hex": msg.signature_hex,
+        "public_key_hex": msg.public_key_hex,
+        "raw_downlink_hex": msg.raw_downlink_hex,
+    }
+    tampered = tamper_downlink_message(signed_msg, tamper_type=tamper_type)
+
+    msg.payload_hex = tampered["payload_hex"]
+    msg.signature_hex = tampered["signature_hex"]
+    msg.raw_downlink_hex = tampered["raw_downlink_hex"]
+    msg.is_tampered = True
+    msg.tamper_reason = tampered.get("tamper_reason")
+    db.commit()
+
+    lora_simulator.log_event(
+        "CHANNEL",
+        f"[DEMO TAMPER] Downlink message for {sos_id} corrupted ({tampered.get('tamper_reason')})",
+        {"sos_id": sos_id, "tamper_type": tamper_type},
+    )
+
+    await ws_manager.broadcast({
+        "type": "DOWNLINK_TAMPERED",
+        "sos_id": sos_id,
+        "message_id": msg.message_id,
+        "tampered_message": {
+            "message_id": msg.message_id,
+            "sos_id": sos_id,
+            "status": msg.status,
+            "payload_hex": msg.payload_hex,
+            "signature_hex": msg.signature_hex,
+            "public_key_hex": msg.public_key_hex,
+            "is_tampered": True,
+            "tamper_reason": msg.tamper_reason,
+        },
     })
 
     return {
-        "status": "accepted",
+        "status": "tampered",
         "sos_id": sos_id,
-        "signed_ack": signed_ack,
+        "tamper_reason": msg.tamper_reason,
+        "instruction": "Open Victim App to observe the red 'Forged message rejected' cryptographic alert!",
     }
 
 
@@ -628,11 +1116,11 @@ def get_victim_acknowledgement(sos_id: str, db: Session = Depends(get_db)):
     if not report:
         raise HTTPException(status_code=404, detail="SOS report not found")
 
-    if report.status != "accepted" or not report.ack_signature_hex:
+    if report.status == "pending" or not report.ack_signature_hex:
         return {
             "status": report.status,  # "pending"
             "accepted": False,
-            "message": "Waiting for authorized responder acknowledgement...",
+            "message": "Waiting for a responder. Your SOS is still being sent.",
         }
 
     payload = json.loads(report.ack_payload_json) if report.ack_payload_json else {}
@@ -645,18 +1133,45 @@ def get_victim_acknowledgement(sos_id: str, db: Session = Depends(get_db)):
         "tamper_reason": report.ack_tamper_reason,
     }
 
-    # Verify signature server-side as well
     is_valid, reason = verify_ack_signature(signed_ack)
 
+    # Also fetch latest downlink message if available
+    latest_msg = db.query(DownlinkMessageModel).filter_by(sos_id=sos_id).order_by(DownlinkMessageModel.seq_num.desc()).first()
+    downlink_data = None
+    if latest_msg:
+        downlink_data = {
+            "message_id": latest_msg.message_id,
+            "seq_num": latest_msg.seq_num,
+            "status": latest_msg.status,
+            "status_label": latest_msg.status_label,
+            "eta_minutes": latest_msg.eta_minutes,
+            "team_type": latest_msg.team_type,
+            "team_type_label": latest_msg.team_type_label,
+            "note_text": latest_msg.note_text,
+            "payload_hex": latest_msg.payload_hex,
+            "signature_hex": latest_msg.signature_hex,
+            "public_key_hex": latest_msg.public_key_hex,
+            "delivery_status": latest_msg.delivery_status,
+            "is_tampered": latest_msg.is_tampered,
+            "tamper_reason": latest_msg.tamper_reason,
+            "created_at": latest_msg.created_at,
+        }
+
     return {
-        "status": "accepted",
+        "status": report.status,
         "accepted": True,
         "signed_ack": signed_ack,
         "server_verified": is_valid,
         "verification_message": reason,
         "responder_name": report.responder_name,
         "eta_minutes": report.eta_minutes,
+        "team_type": report.team_type,
+        "team_type_label": report.team_type_label,
+        "latest_note": report.latest_note,
+        "delivery_status": report.delivery_status,
+        "latest_downlink": downlink_data,
     }
+
 
 
 @app.post("/api/demo/tamper-ack/{sos_id}")

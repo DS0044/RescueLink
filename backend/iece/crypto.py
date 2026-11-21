@@ -9,7 +9,7 @@ Provides asymmetric cryptographic signatures for responder acknowledgements:
 """
 
 import json
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 
@@ -138,3 +138,106 @@ def tamper_ack_payload(signed_ack: Dict[str, Any], tamper_type: str = "modify_fi
         tampered["tamper_reason"] = "Victim SOS target ID changed to hijack rescue allocation"
 
     return tampered
+
+
+def create_signed_downlink_message(
+    downlink_bytes: bytes,
+    keypair: ResponderKeyPair,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Sign a compact 16-byte Downlink packet using Ed25519.
+    Produces an 80-byte radio payload (16B Downlink struct + 64B Ed25519 signature).
+    """
+    if len(downlink_bytes) != 16:
+        raise ValueError(f"Downlink payload must be exactly 16 bytes, got {len(downlink_bytes)}")
+
+    signature_hex = keypair.sign(downlink_bytes)
+    sig_bytes = bytes.fromhex(signature_hex)
+    raw_radio_packet = downlink_bytes + sig_bytes
+    assert len(raw_radio_packet) == 80, f"Expected 80 bytes radio frame, got {len(raw_radio_packet)}"
+
+    res = {
+        "algorithm": "Ed25519",
+        "payload_hex": downlink_bytes.hex().upper(),
+        "signature_hex": signature_hex,
+        "public_key_hex": keypair.public_key_hex,
+        "raw_downlink_hex": raw_radio_packet.hex().upper(),
+        "payload_bytes_len": len(downlink_bytes),
+        "total_bytes_len": len(raw_radio_packet),
+        "is_tampered": False,
+        "tamper_reason": None,
+    }
+    if metadata:
+        res["metadata"] = metadata
+    return res
+
+
+def verify_downlink_message(
+    payload_bytes_or_hex: bytes | str,
+    signature_hex: str,
+    public_key_hex: str,
+    is_tampered: bool = False,
+    tamper_reason: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Verify Ed25519 signature of a compact downlink message."""
+    if is_tampered:
+        return False, f"REJECTED: {tamper_reason or 'Tampered downlink message'}"
+
+    try:
+        if isinstance(payload_bytes_or_hex, str):
+            payload_bytes = bytes.fromhex(payload_bytes_or_hex)
+        else:
+            payload_bytes = payload_bytes_or_hex
+
+        if len(payload_bytes) != 16:
+            return False, f"Invalid downlink payload length ({len(payload_bytes)} bytes, expected 16)"
+
+        sig_bytes = bytes.fromhex(signature_hex)
+        pub_bytes = bytes.fromhex(public_key_hex)
+
+        if len(sig_bytes) != 64:
+            return False, f"Invalid signature length ({len(sig_bytes)} bytes, expected 64)"
+        if len(pub_bytes) != 32:
+            return False, f"Invalid public key length ({len(pub_bytes)} bytes, expected 32)"
+
+        pub_key = ed25519.Ed25519PublicKey.from_public_bytes(pub_bytes)
+        pub_key.verify(sig_bytes, payload_bytes)
+        return True, "Valid Ed25519 signature from authorized responder key"
+    except Exception as e:
+        return False, f"Ed25519 signature verification failed: {str(e)}"
+
+
+def tamper_downlink_message(signed_msg: Dict[str, Any], tamper_type: str = "corrupt_signature") -> Dict[str, Any]:
+    """Deliberately corrupt a downlink message for tamper demo testing."""
+    import copy
+    tampered = copy.deepcopy(signed_msg)
+
+    if tamper_type == "modify_status":
+        # Alter the status or ETA byte in payload without signing
+        payload = bytearray(bytes.fromhex(tampered["payload_hex"]))
+        payload[5] = 0x05  # Force status to ARRIVED (0x05) prematurely
+        tampered["payload_hex"] = payload.hex().upper()
+        tampered["is_tampered"] = True
+        tampered["tamper_reason"] = "Payload status byte altered in transit without valid signature"
+    elif tamper_type == "modify_eta":
+        payload = bytearray(bytes.fromhex(tampered["payload_hex"]))
+        payload[6] = 0x00
+        payload[7] = 0x01  # Force ETA to 1 min
+        tampered["payload_hex"] = payload.hex().upper()
+        tampered["is_tampered"] = True
+        tampered["tamper_reason"] = "Downlink ETA bytes modified without responder cryptographic signature"
+    else:
+        # Flip bits in signature
+        sig = tampered["signature_hex"]
+        flipped = "AA" + sig[2:] if not sig.startswith("AA") else "55" + sig[2:]
+        tampered["signature_hex"] = flipped
+        tampered["is_tampered"] = True
+        tampered["tamper_reason"] = "Signature bytes corrupted in simulated RF channel transmission"
+
+    # Reconstruct raw radio packet with corrupted parts
+    p_bytes = bytes.fromhex(tampered["payload_hex"])
+    s_bytes = bytes.fromhex(tampered["signature_hex"])
+    tampered["raw_downlink_hex"] = (p_bytes + s_bytes).hex().upper()
+    return tampered
+

@@ -170,6 +170,74 @@ class LoRaChannelSimulator:
         )
         return {"delivered": True, "downlink_latency_ms": round(sim_delay * 1000)}
 
+    async def transmit_downlink_message(
+        self,
+        downlink_bytes: bytes,
+        signed_msg: Dict[str, Any],
+        victim_id: int,
+        attempt: int = 1,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        Simulate transmitting signed compact 16B downlink message back to victim via LoRa.
+        Handles propagation delay, simulated channel loss, and retry attempts.
+        """
+        sim_delay = (self.delay_ms / 1000.0) if self.mode == "SIMULATED" else 0.05
+        jitter = sim_delay * random.uniform(-0.1, 0.1)
+        total_delay = max(0.02, sim_delay + jitter)
+        await asyncio.sleep(total_delay)
+
+        # Check packet loss
+        is_dropped = (random.uniform(0, 100) < self.packet_loss_percent) if self.mode == "SIMULATED" else False
+        status_label = signed_msg.get("status_label", signed_msg.get("status", "Update"))
+        sos_id = signed_msg.get("sos_id", f"SOS-{victim_id}")
+
+        if is_dropped:
+            self.stats["packets_dropped"] += 1
+            self.log_event(
+                "DOWNLINK",
+                f"Downlink message for {sos_id} DROPPED by RF interference (Attempt {attempt}/{max_retries}, {self.packet_loss_percent}% loss rate)",
+                {
+                    "sos_id": sos_id,
+                    "victim_id": victim_id,
+                    "attempt": attempt,
+                    "status": signed_msg.get("status"),
+                    "delivered": False,
+                    "retry_queued": attempt < max_retries,
+                },
+            )
+            return {
+                "delivered": False,
+                "dropped": True,
+                "attempt": attempt,
+                "time_on_air_ms": round(total_delay * 1000),
+                "retry_queued": attempt < max_retries,
+            }
+
+        self.stats["downlink_delivered"] += 1
+        self.stats["packets_delivered"] += 1
+        self.log_event(
+            "DOWNLINK",
+            f"Signed Downlink '{status_label}' delivered to Node #{victim_id} (Attempt {attempt}/{max_retries}, {len(downlink_bytes)}B payload + 64B Ed25519 sig)",
+            {
+                "sos_id": sos_id,
+                "victim_id": victim_id,
+                "status": signed_msg.get("status"),
+                "eta_minutes": signed_msg.get("eta_minutes"),
+                "attempt": attempt,
+                "delivered": True,
+                "time_on_air_ms": round(total_delay * 1000),
+                "raw_downlink_hex_preview": signed_msg.get("raw_downlink_hex", "")[:24] + "...",
+            },
+        )
+        return {
+            "delivered": True,
+            "dropped": False,
+            "attempt": attempt,
+            "time_on_air_ms": round(total_delay * 1000),
+        }
+
+
     def get_status(self) -> Dict[str, Any]:
         return {
             "mode": self.mode,
