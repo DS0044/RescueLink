@@ -123,15 +123,62 @@ Detailed specification in [docs/PACKET_FORMAT.md](file:///c:/Users/dd961/OneDriv
 
 ### 3. Open Web Pages
 - 🏠 **Landing Page**: [http://localhost:8000/](http://localhost:8000/)
-- 🚨 **Victim SOS Terminal**: [http://localhost:8000/victim](http://localhost:8000/victim)
-- 🗺️ **Rescue Dashboard & Map**: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+- 🚨 **Victim SOS Terminal**: [http://localhost:8000/victim](http://localhost:8000/victim) *(100% public, no login required)*
+- 🔑 **Responder Sign In**: [http://localhost:8000/login](http://localhost:8000/login)
+- 📝 **Access Request**: [http://localhost:8000/register](http://localhost:8000/register)
+- 🗺️ **Rescue Dashboard & Map**: [http://localhost:8000/dashboard](http://localhost:8000/dashboard) *(Requires Responder+ session)*
+- 👥 **Admin User Management**: [http://localhost:8000/admin/users](http://localhost:8000/admin/users) *(Requires Admin session)*
 - 🧪 **Demo Control Center**: [http://localhost:8000/demo](http://localhost:8000/demo)
+
+---
+
+## 🔐 Authentication, Authorization (RBAC) & Session Protection
+
+RescueLink incorporates an enterprise disaster command authentication model separating distressed victims from verified rescue responders:
+
+### 1. Role-Based Access Control (RBAC)
+- **Victim (Public)**: Submits distress packets (`POST /api/sos`) and receives verified downlinks (`GET /api/sos/{id}/messages`). Never blocked by login barriers.
+- **Responder**: Views live tactical map, inspects SOS telemetry, accepts assignments, and broadcasts signed mission lifecycle updates.
+- **Coordinator**: All Responder rights + Manual AI triage priority override (`POST /api/sos/{id}/override`) and team reassignment.
+- **Administrator**: All Coordinator rights + User approval/rejection, role management, offline temporary password recovery, and access to immutable security audit logs (`/admin/users`).
+
+### 2. Evaluator Demo Credentials
+| Role | Username | Password | Access Scope |
+|---|---|---|---|
+| **Admin** | `admin` | `RescueAdmin@2026!` | Full dashboard + Admin console + Audit logs |
+| **Coordinator** | `coordinator_rao` | `RescueCoord@2026!` | Dashboard + Priority override + Dispatch |
+| **Responder** | `responder_singh` | `RescueResp@2026!` | Dashboard + SOS acceptance + Mission updates |
+| **Pending Volunteer** | `volunteer_kiran` | `RescueVolunteer@2026!` | Pending approval (Login blocked with prompt) |
+
+### 3. Cryptographic Session & Token Architecture
+- **Password Storage**: Passwords salted and hashed with `bcrypt` (work factor rounds=12).
+- **Dual-Token System**:
+  - **Access Token**: Short-lived JWT (15 minutes), passed via `Authorization: Bearer` or HttpOnly cookie.
+  - **Refresh Token**: Long-lived secure token (7 days; 30 days with "Remember Me") with cryptographic rotation and database revocation.
+- **Brute-Force Lockout**: 5 consecutive failed attempts trigger account lockout (5 minutes, doubling on repeated failures). Identical timing-safe response for non-existent users and incorrect passwords.
+- **Inactivity Warning**: Auto-logout after 30 minutes of inactivity with a warning countdown modal at minute 29.
+- **Protected WebSockets**: Real-time channel `/ws/dashboard` validates token on handshake and terminates with code 4401 on revocation.
+- **Offline Password Recovery**: For disaster zones cut off from external mail servers, Admins generate a one-time temporary password (`TempRescue!XXXX`) enforcing `must_change_password=True`.
+
+### 4. Prototype Disclosure: Prototype vs. Full Production
+In adherence to realistic engineering standards:
+- **Implemented in Prototype**: Bcrypt password hashing, JWT dual-token rotation, HttpOnly cookies, RBAC route guards, IP rate-limiting, account lockout, offline temporary password reset, security audit logging, and security response headers (CSP, X-Frame-Options, X-Content-Type-Options).
+- **Required for Full Production Deployment**: HTTPS/TLS termination with HSTS, Hardware Security Modules (HSM) or cloud KMS for signing keys, Hardware-bound multi-factor authentication (FIDO2/WebAuthn), and out-of-band identity vetting for government emergency responders.
 
 ---
 
 ## 📸 Feature Screenshots & Visual Deliverables
 
 All high-resolution responsive screenshots are available in [docs/design/](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/):
+
+### Authentication & Access Control
+| Feature View | Screenshot File |
+|---|---|
+| **Responder Sign In** | [auth_login_page.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/auth_login_page.png) |
+| **Uniform Error / Account Lockout** | [auth_login_error_state.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/auth_login_error_state.png) |
+| **Access Request & Password Strength** | [auth_register_page.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/auth_register_page.png) |
+| **Header User Menu & Account Actions** | [dashboard_header_user_menu.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/dashboard_header_user_menu.png) |
+| **Admin User Management & Audit Logs** | [admin_user_management_page.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/admin_user_management_page.png) |
 
 ### Rescue Dashboard Selection & Location Vectoring
 | Feature View | Screenshot File |
@@ -159,4 +206,7 @@ Run all test suites locally:
 
 # End-to-end integration lifecycle test suite (11/11 checks)
 .\venv\Scripts\python backend/tests/test_mission_lifecycle.py
+
+# Complete Authentication, RBAC, Rate-Limiting & Audit Log suite (10/10 checks)
+.\venv\Scripts\python backend/tests/test_auth_rbac.py
 ```

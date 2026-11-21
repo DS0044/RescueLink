@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Radio,
   MapPin,
   Sliders,
   Shield,
+  ShieldCheck,
+  ShieldAlert,
   Layers,
   Activity,
   AlertTriangle,
@@ -12,6 +14,12 @@ import {
   Wifi,
   WifiOff,
   Home,
+  User,
+  KeyRound,
+  Users,
+  LogOut,
+  ChevronDown,
+  LogIn,
 } from 'lucide-react';
 
 import LandingView from './components/LandingView';
@@ -19,54 +27,96 @@ import VictimView from './components/VictimView';
 import DashboardView from './components/DashboardView';
 import DemoControlPanel from './components/DemoControlPanel';
 import AboutHonestyModal from './components/AboutHonestyModal';
-
-const DEFAULT_COMMANDER = {
-  id: 'RESP-NDRF-01',
-  responder_id: 'RESP-NDRF-01',
-  name: 'Capt. A. Sharma',
-  responder_name: 'Capt. A. Sharma',
-  organization: 'NDRF 4th Battalion',
-  role: 'Incident Commander',
-};
+import LoginView from './components/LoginView';
+import RegisterView from './components/RegisterView';
+import AdminUsersView from './components/AdminUsersView';
+import ChangePasswordModal from './components/ChangePasswordModal';
+import InactivityWarningModal from './components/InactivityWarningModal';
+import { getCurrentUser, logoutUser, getSessionToken } from './utils/auth';
 
 const getInitialView = () => {
   const path = window.location.pathname.toLowerCase();
+  if (path.includes('admin/users') || path.includes('admin-users')) return 'admin-users';
   if (path.includes('dashboard')) return 'dashboard';
   if (path.includes('victim')) return 'victim';
   if (path.includes('demo')) return 'demo';
+  if (path.includes('register')) return 'register';
+  if (path.includes('login')) return 'login';
   return 'landing';
 };
 
 export default function App() {
   const [activeView, setActiveView] = useState(getInitialView);
+  const [activeUser, setActiveUser] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
   const [reports, setReports] = useState([]);
   const [groups, setGroups] = useState([]);
   const [stats, setStats] = useState(null);
   const [channelStatus, setChannelStatus] = useState(null);
-  const [activeResponder, setActiveResponder] = useState(() => {
-    try {
-      const saved = localStorage.getItem('rescuelink_active_responder');
-      return saved ? JSON.parse(saved) : DEFAULT_COMMANDER;
-    } catch {
-      return DEFAULT_COMMANDER;
-    }
-  });
   const [wsConnected, setWsConnected] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [activeScriptedStep, setActiveScriptedStep] = useState(null);
   const [toastMessage, setToastMessage] = useState('');
 
-  useEffect(() => {
-    if (activeResponder) {
-      localStorage.setItem('rescuelink_active_responder', JSON.stringify(activeResponder));
-    } else {
-      localStorage.removeItem('rescuelink_active_responder');
-    }
-  }, [activeResponder]);
+  // Dropdown & Modals
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [loginRedirectTarget, setLoginRedirectTarget] = useState('dashboard');
 
+  // Inactivity Timeout (30 min auto-logout, 1 min warning)
+  const [showInactivityModal, setShowInactivityModal] = useState(false);
+  const [inactivitySecondsLeft, setInactivitySecondsLeft] = useState(60);
+  const idleTimerRef = useRef(null);
+  const countdownTimerRef = useRef(null);
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(''), 4000);
+  };
+
+  // Check auth session on startup
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        const user = await getCurrentUser();
+        setActiveUser(user);
+      } catch (err) {
+        console.error('Session check failed:', err);
+      } finally {
+        setAuthChecking(false);
+      }
+    };
+    initAuth();
+  }, []);
+
+  // Route Guard Navigation
   const navigateTo = (view) => {
+    setShowUserDropdown(false);
+
+    // Protected views require authentication
+    const protectedViews = ['dashboard', 'demo', 'admin-users'];
+    if (protectedViews.includes(view) && !activeUser) {
+      setLoginRedirectTarget(view);
+      setActiveView('login');
+      const targetPath = `/login?next=/${view}`;
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({}, '', targetPath);
+      }
+      return;
+    }
+
+    // Admin view requires admin role
+    if (view === 'admin-users' && activeUser?.role !== 'admin') {
+      showToast('Access Denied: Administrator role required.');
+      navigateTo('dashboard');
+      return;
+    }
+
     setActiveView(view);
-    const targetPath = view === 'landing' ? '/' : `/${view}`;
+    let targetPath = '/';
+    if (view === 'admin-users') targetPath = '/admin/users';
+    else if (view !== 'landing') targetPath = `/${view}`;
+
     if (window.location.pathname !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }
@@ -74,45 +124,125 @@ export default function App() {
 
   useEffect(() => {
     const handlePopState = () => {
-      setActiveView(getInitialView());
+      const v = getInitialView();
+      navigateTo(v);
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [activeUser]);
 
+  // If user hits protected route directly when unauthenticated after initial check
+  useEffect(() => {
+    if (!authChecking) {
+      const protectedViews = ['dashboard', 'demo', 'admin-users'];
+      if (protectedViews.includes(activeView) && !activeUser) {
+        setLoginRedirectTarget(activeView);
+        setActiveView('login');
+      }
+    }
+  }, [authChecking, activeView, activeUser]);
 
-  const showToast = (msg) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(''), 4000);
+  // Inactivity tracking (30 min inactivity = 29m idle + 1m countdown warning)
+  const resetIdleTimer = useCallback(() => {
+    if (!activeUser) return;
+    setShowInactivityModal(false);
+    clearInterval(countdownTimerRef.current);
+    clearTimeout(idleTimerRef.current);
+
+    // 29 minutes = 1740 seconds
+    idleTimerRef.current = setTimeout(() => {
+      setShowInactivityModal(true);
+      setInactivitySecondsLeft(60);
+
+      countdownTimerRef.current = setInterval(() => {
+        setInactivitySecondsLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(countdownTimerRef.current);
+            handleSignOut('Session expired, please sign in again');
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }, 29 * 60 * 1000);
+  }, [activeUser]);
+
+  useEffect(() => {
+    if (!activeUser) return;
+
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    const handleActivity = () => resetIdleTimer();
+
+    events.forEach((e) => window.addEventListener(e, handleActivity));
+    resetIdleTimer();
+
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, handleActivity));
+      clearTimeout(idleTimerRef.current);
+      clearInterval(countdownTimerRef.current);
+    };
+  }, [activeUser, resetIdleTimer]);
+
+  // Sign out handler
+  const handleSignOut = async (customMessage) => {
+    setShowUserDropdown(false);
+    setShowInactivityModal(false);
+    clearTimeout(idleTimerRef.current);
+    clearInterval(countdownTimerRef.current);
+
+    await logoutUser();
+    setActiveUser(null);
+    showToast(customMessage || 'Successfully signed out');
+    navigateTo('login');
   };
 
-  // Fetch initial data
+  // Sign in success callback
+  const handleLoginSuccess = (user, target) => {
+    setActiveUser(user);
+    showToast(`Welcome back, ${user.name}`);
+    if (user.must_change_password) {
+      setShowPasswordModal(true);
+    }
+    navigateTo(target || 'dashboard');
+  };
+
+  // Fetch initial data (only if authenticated or public simulator/victim)
   const fetchData = useCallback(async () => {
     try {
-      const [sosRes, grpRes, simRes, statsRes] = await Promise.all([
-        fetch('/api/sos/list'),
-        fetch('/api/sos/groups'),
-        fetch('/api/simulator/config'),
-        fetch('/api/iece/stats'),
-      ]);
+      const headers = {};
+      const token = getSessionToken();
+      if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      if (sosRes.ok) setReports(await sosRes.json());
-      if (grpRes.ok) setGroups(await grpRes.json());
+      const [simRes] = await Promise.all([fetch('/api/simulator/config')]);
       if (simRes.ok) setChannelStatus(await simRes.json());
-      if (statsRes.ok) setStats(await statsRes.json());
+
+      if (activeUser) {
+        const [sosRes, grpRes, statsRes] = await Promise.all([
+          fetch('/api/sos/list', { headers }),
+          fetch('/api/sos/groups', { headers }),
+          fetch('/api/iece/stats', { headers }),
+        ]);
+
+        if (sosRes.ok) setReports(await sosRes.json());
+        if (grpRes.ok) setGroups(await grpRes.json());
+        if (statsRes.ok) setStats(await statsRes.json());
+      }
     } catch (err) {
-      console.error('Error fetching initial data:', err);
+      console.error('Error fetching data:', err);
     }
-  }, []);
+  }, [activeUser]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // Connect WebSocket for real-time live events
+  // Connect WebSocket for real-time live events (authenticated with token)
   useEffect(() => {
+    if (!activeUser) return;
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/dashboard`;
+    const token = getSessionToken();
+    const wsUrl = `${protocol}//${window.location.host}/ws/dashboard${token ? `?token=${token}` : ''}`;
     let ws;
 
     const connect = () => {
@@ -128,23 +258,21 @@ export default function App() {
           if (msg.type === 'NEW_SOS') {
             fetchData();
             showToast(`New SOS Received: Node #${msg.report?.victim_id} (${msg.report?.emergency_type_label})`);
-          } else if (msg.type === 'SOS_ACCEPTED') {
+          } else if (msg.type === 'SOS_ACCEPTED' || msg.type === 'STATUS_CHANGED') {
             fetchData();
-            showToast(`Rescue Mission Accepted by ${msg.responder_name}`);
-          } else if (msg.type === 'SIM_CONFIG_UPDATED') {
-            setChannelStatus(msg.config);
-          } else if (msg.type === 'ACK_TAMPERED') {
+          } else if (msg.type === 'PRIORITY_OVERRIDDEN') {
             fetchData();
-            showToast(`[Security Test] Acknowledgement payload altered`);
+            showToast(`Priority Overridden: ${msg.sos_id} set to ${msg.severity_label} by Coordinator`);
+          } else if (msg.type === 'FORCE_DISCONNECT') {
+            handleSignOut('Your account was disabled by an administrator');
           }
-        } catch (err) {
-          console.error('WS parse error:', err);
+        } catch (e) {
+          console.error('WS parse error:', e);
         }
       };
 
       ws.onclose = () => {
         setWsConnected(false);
-        setTimeout(connect, 2000);
       };
 
       ws.onerror = () => {
@@ -157,124 +285,18 @@ export default function App() {
     return () => {
       if (ws) ws.close();
     };
-  }, [fetchData]);
+  }, [activeUser, fetchData]);
 
-  // Handler: Responder Login
-  const handleLogin = async (responderId) => {
-    try {
-      const res = await fetch('/api/auth/responder-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ responder_id: responderId }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setActiveResponder(data);
-        showToast(`Authenticated: ${data.responder_name}`);
+  // Close user dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('.header-user-menu-wrapper')) {
+        setShowUserDropdown(false);
       }
-    } catch (err) {
-      alert(`Login failed: ${err.message}`);
-    }
-  };
-
-  const handleLogout = () => {
-    setActiveResponder(null);
-    showToast('Responder signed out');
-  };
-
-  // Handler: Accept SOS
-  const handleAcceptSos = async (dataOrSosId, responder) => {
-    if (dataOrSosId && typeof dataOrSosId === 'object' && dataOrSosId.packet_id) {
-      await fetchData();
-      showToast(`Accepted SOS #${dataOrSosId.victim_id}: Signed downlink dispatched!`);
-      return;
-    }
-    try {
-      const respId = responder?.responder_id || responder?.id || activeResponder?.id || 'RESP-NDRF-01';
-      const respName = responder?.responder_name || responder?.name || activeResponder?.name || 'Capt. A. Sharma';
-      const res = await fetch(`/api/sos/${dataOrSosId}/accept`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          responder_id: respId,
-          responder_name: respName,
-          eta_minutes: 12,
-        }),
-      });
-      if (res.ok) {
-        await fetchData();
-        showToast(`Signed Ed25519 acknowledgement for ${dataOrSosId}`);
-      }
-    } catch (err) {
-      alert(`Accept failed: ${err.message}`);
-    }
-  };
-
-  // Handler: Update Simulator Config
-  const handleUpdateSimConfig = async (config) => {
-    try {
-      const res = await fetch('/api/simulator/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setChannelStatus(data);
-      }
-    } catch (err) {
-      console.error('Error updating sim config:', err);
-    }
-  };
-
-  // Handler: Reset Data
-  const handleResetData = async () => {
-    const res = await fetch('/api/demo/reset', { method: 'POST' });
-    await fetchData();
-    showToast('Demo data reset to clean slate');
-    return await res.json();
-  };
-
-  // Handler: Seed Data
-  const handleSeedData = async () => {
-    const res = await fetch('/api/demo/seed', { method: 'POST' });
-    await fetchData();
-    showToast('Loaded disaster scenario seed dataset');
-    return await res.json();
-  };
-
-  // Handler: Sample Two (P1 vs P3 priority test)
-  const handleSendSampleTwo = async () => {
-    const res = await fetch('/api/demo/sample-two', { method: 'POST' });
-    await fetchData();
-    setActiveView('dashboard');
-    showToast('Sample Two dispatched: Cardiac (P1) preempts Stranded (P3)!');
-    return await res.json();
-  };
-
-  // Handler: Sample Five (Flood cluster grouping test)
-  const handleSendSampleFive = async () => {
-    const res = await fetch('/api/demo/sample-five', { method: 'POST' });
-    await fetchData();
-    setActiveView('dashboard');
-    showToast('Sample Five generated: Auto-grouped into single cluster card!');
-    return await res.json();
-  };
-
-  // Handler: Scripted Walkthrough Sequence
-  const handleTriggerScriptedStep = (stepNumber) => {
-    setActiveScriptedStep(stepNumber);
-    if (stepNumber === 1 || stepNumber === 2) {
-      navigateTo('victim');
-    } else if (stepNumber === 3 || stepNumber === 4) {
-      navigateTo('dashboard');
-      if (stepNumber === 4 && !activeResponder) {
-        handleLogin('RESP-NDRF-01');
-      }
-    } else if (stepNumber === 5 || stepNumber === 6) {
-      navigateTo('victim');
-    }
-  };
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -326,7 +348,7 @@ export default function App() {
               >
                 <MapPin className="w-4 h-4" />
                 <span>Rescue Dashboard</span>
-                <span className="nav-badge">{reports.length}</span>
+                {reports.length > 0 && <span className="nav-badge">{reports.length}</span>}
               </button>
 
               <button
@@ -339,9 +361,22 @@ export default function App() {
                 <Sliders className="w-4 h-4" />
                 <span>Demo Control</span>
               </button>
+
+              {activeUser?.role === 'admin' && (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeView === 'admin-users'}
+                  onClick={() => navigateTo('admin-users')}
+                  className={`nav-pill ${activeView === 'admin-users' ? 'active' : ''}`}
+                >
+                  <Users className="w-4 h-4" />
+                  <span>User Management</span>
+                </button>
+              )}
             </nav>
 
-            {/* Right: Status Group */}
+            {/* Right: Status & User Menu */}
             <div className="status-area">
               <div className={`status-chip ${wsConnected ? 'network-online' : 'network-offline'}`}>
                 <span className="status-dot"></span>
@@ -352,6 +387,95 @@ export default function App() {
                 <span className="status-dot"></span>
                 <span>Link: {channelStatus?.is_simulated ? 'Simulated' : 'Real LoRa'}</span>
               </div>
+
+              {/* User Menu Dropdown or Sign In Button */}
+              {activeUser ? (
+                <div className="header-user-menu-wrapper">
+                  <button
+                    type="button"
+                    onClick={() => setShowUserDropdown(!showUserDropdown)}
+                    className="header-user-trigger"
+                    aria-expanded={showUserDropdown}
+                  >
+                    <ShieldCheck className="w-4 h-4 text-orange-400" />
+                    <span>{activeUser.name.split(' ')[0]}</span>
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        padding: '1px 6px',
+                        borderRadius: '4px',
+                        backgroundColor: activeUser.role === 'admin' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.2)',
+                        color: activeUser.role === 'admin' ? '#F87171' : '#FCD34D',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      {activeUser.role}
+                    </span>
+                    <ChevronDown className="w-3.5 h-3.5 text-tertiary" />
+                  </button>
+
+                  {/* Dropdown Card */}
+                  {showUserDropdown && (
+                    <div className="header-user-dropdown">
+                      <div className="user-dropdown-header">
+                        <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '13px' }}>
+                          {activeUser.name}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontFamily: 'var(--font-family-mono)' }}>
+                          {activeUser.email}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--accent-orange)', marginTop: '2px' }}>
+                          {activeUser.organisation}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowUserDropdown(false);
+                          setShowPasswordModal(true);
+                        }}
+                        className="user-dropdown-item"
+                      >
+                        <KeyRound className="w-4 h-4 text-tertiary" />
+                        <span>Change Password</span>
+                      </button>
+
+                      {activeUser.role === 'admin' && (
+                        <button
+                          type="button"
+                          onClick={() => navigateTo('admin-users')}
+                          className="user-dropdown-item"
+                        >
+                          <Users className="w-4 h-4 text-tertiary" />
+                          <span>User Management</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => handleSignOut()}
+                        className="user-dropdown-item danger"
+                        style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '4px', paddingTop: '8px' }}
+                      >
+                        <LogOut className="w-4 h-4 text-red-400" />
+                        <span>Sign Out</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => navigateTo('login')}
+                  className="btn btn-secondary"
+                  style={{ height: '34px', fontSize: '12px', padding: '0 12px' }}
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Responder Sign In</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -367,77 +491,129 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Page Container */}
+      {/* Main Content Area */}
       <main className="page-container" style={{ flex: 1, paddingBottom: '32px' }}>
-        {activeView === 'landing' && (
-          <LandingView onNavigate={(view) => navigateTo(view)} />
-        )}
+        {authChecking ? (
+          <div style={{ textAlign: 'center', padding: '80px 20px', color: 'var(--text-secondary)' }}>
+            <Shield className="w-8 h-8 text-orange-400 animate-pulse" style={{ margin: '0 auto 12px' }} />
+            <p style={{ fontWeight: 600 }}>Authenticating secure responder session...</p>
+          </div>
+        ) : (
+          <>
+            {activeView === 'landing' && <LandingView onNavigate={(view) => navigateTo(view)} />}
 
-        {activeView === 'victim' && (
-          <VictimView
-            channelStatus={channelStatus}
-            onSosCreated={() => {
-              fetchData();
-            }}
-          />
-        )}
+            {activeView === 'victim' && (
+              <VictimView
+                channelStatus={channelStatus}
+                onSosCreated={() => {
+                  fetchData();
+                }}
+              />
+            )}
 
-        {activeView === 'dashboard' && (
-          <DashboardView
-            reports={reports}
-            groups={groups}
-            activeResponder={activeResponder}
-            onLogin={handleLogin}
-            onLogout={handleLogout}
-            onAcceptSos={handleAcceptSos}
-            channelStatus={channelStatus}
-          />
-        )}
+            {activeView === 'login' && (
+              <LoginView
+                onLoginSuccess={handleLoginSuccess}
+                onNavigate={(view) => navigateTo(view)}
+                redirectTarget={loginRedirectTarget}
+              />
+            )}
 
-        {activeView === 'demo' && (
-          <DemoControlPanel
-            channelStatus={channelStatus}
-            onUpdateSimConfig={handleUpdateSimConfig}
-            onResetData={handleResetData}
-            onSeedData={handleSeedData}
-            onSendSampleTwo={handleSendSampleTwo}
-            onSendSampleFive={handleSendSampleFive}
-            onTriggerScriptedStep={handleTriggerScriptedStep}
-            activeStep={activeScriptedStep}
-          />
+            {activeView === 'register' && (
+              <RegisterView onNavigate={(view) => navigateTo(view)} />
+            )}
+
+            {activeView === 'dashboard' && activeUser && (
+              <DashboardView
+                reports={reports}
+                groups={groups}
+                activeResponder={activeUser}
+                onAcceptSos={() => fetchData()}
+                channelStatus={channelStatus}
+              />
+            )}
+
+            {activeView === 'admin-users' && activeUser?.role === 'admin' && (
+              <AdminUsersView currentUser={activeUser} onNavigate={(view) => navigateTo(view)} />
+            )}
+
+            {activeView === 'demo' && activeUser && (
+              <DemoControlPanel
+                channelStatus={channelStatus}
+                onUpdateSimConfig={() => fetchData()}
+                onResetData={() => fetchData()}
+                onSeedData={() => fetchData()}
+                onSendSampleTwo={() => {
+                  fetchData();
+                  navigateTo('dashboard');
+                }}
+                onSendSampleFive={() => {
+                  fetchData();
+                  navigateTo('dashboard');
+                }}
+                onTriggerScriptedStep={(step) => {
+                  setActiveScriptedStep(step);
+                  if (step === 1 || step === 2) navigateTo('victim');
+                  else if (step === 3 || step === 4) navigateTo('dashboard');
+                  else if (step === 5 || step === 6) navigateTo('victim');
+                }}
+                activeStep={activeScriptedStep}
+              />
+            )}
+          </>
         )}
       </main>
 
+      {/* Change Password Modal */}
+      <ChangePasswordModal
+        isOpen={showPasswordModal}
+        isForced={activeUser?.must_change_password}
+        onClose={() => setShowPasswordModal(false)}
+        onSuccess={() => {
+          showToast('Password changed successfully');
+          if (activeUser) {
+            setActiveUser({ ...activeUser, must_change_password: false });
+          }
+        }}
+      />
+
+      {/* Inactivity Warning Dialog */}
+      <InactivityWarningModal
+        isOpen={showInactivityModal}
+        secondsRemaining={inactivitySecondsLeft}
+        onStayLoggedIn={resetIdleTimer}
+        onLogoutNow={() => handleSignOut()}
+      />
+
       {/* Toast Notification Alert */}
       {toastMessage && (
-        <div style={{
-          position: 'fixed',
-          bottom: '24px',
-          right: '24px',
-          zIndex: 3000,
-          backgroundColor: 'var(--bg-surface-elevated)',
-          border: '1px solid var(--accent-orange-border)',
-          borderRadius: '8px',
-          padding: '12px 18px',
-          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
-          color: 'var(--text-primary)',
-          fontSize: '13px',
-          fontWeight: 600,
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          animation: 'pulse-subtle 2s ease',
-        }}>
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            right: '24px',
+            zIndex: 3000,
+            backgroundColor: 'var(--bg-surface-elevated)',
+            border: '1px solid var(--accent-orange-border)',
+            borderRadius: '8px',
+            padding: '12px 18px',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+            color: 'var(--text-primary)',
+            fontSize: '13px',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            animation: 'pulse-subtle 2s ease',
+          }}
+        >
           <CheckCircle className="w-4 h-4 text-orange-400" />
           <span>{toastMessage}</span>
         </div>
       )}
 
       {/* Architecture & Honesty Disclosure Modal */}
-      <AboutHonestyModal
-        isOpen={showAboutModal}
-        onClose={() => setShowAboutModal(false)}
-      />
+      <AboutHonestyModal isOpen={showAboutModal} onClose={() => setShowAboutModal(false)} />
     </div>
   );
 }
