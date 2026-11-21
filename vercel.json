@@ -5,31 +5,11 @@
   "cleanUrls": true,
   "rewrites": [
     {
-      "source": "/api/:path*",
+      "source": "/api/(.*)",
       "destination": "/api/index.py"
     },
     {
-      "source": "/victim",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/dashboard",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/demo",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/login",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/register",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/admin/:path*",
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]
