@@ -20,6 +20,15 @@ import DashboardView from './components/DashboardView';
 import DemoControlPanel from './components/DemoControlPanel';
 import AboutHonestyModal from './components/AboutHonestyModal';
 
+const DEFAULT_COMMANDER = {
+  id: 'RESP-NDRF-01',
+  responder_id: 'RESP-NDRF-01',
+  name: 'Capt. A. Sharma',
+  responder_name: 'Capt. A. Sharma',
+  organization: 'NDRF 4th Battalion',
+  role: 'Incident Commander',
+};
+
 const getInitialView = () => {
   const path = window.location.pathname.toLowerCase();
   if (path.includes('dashboard')) return 'dashboard';
@@ -34,11 +43,26 @@ export default function App() {
   const [groups, setGroups] = useState([]);
   const [stats, setStats] = useState(null);
   const [channelStatus, setChannelStatus] = useState(null);
-  const [activeResponder, setActiveResponder] = useState(null);
+  const [activeResponder, setActiveResponder] = useState(() => {
+    try {
+      const saved = localStorage.getItem('rescuelink_active_responder');
+      return saved ? JSON.parse(saved) : DEFAULT_COMMANDER;
+    } catch {
+      return DEFAULT_COMMANDER;
+    }
+  });
   const [wsConnected, setWsConnected] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [activeScriptedStep, setActiveScriptedStep] = useState(null);
   const [toastMessage, setToastMessage] = useState('');
+
+  useEffect(() => {
+    if (activeResponder) {
+      localStorage.setItem('rescuelink_active_responder', JSON.stringify(activeResponder));
+    } else {
+      localStorage.removeItem('rescuelink_active_responder');
+    }
+  }, [activeResponder]);
 
   const navigateTo = (view) => {
     setActiveView(view);
@@ -159,20 +183,27 @@ export default function App() {
   };
 
   // Handler: Accept SOS
-  const handleAcceptSos = async (sosId, responder) => {
+  const handleAcceptSos = async (dataOrSosId, responder) => {
+    if (dataOrSosId && typeof dataOrSosId === 'object' && dataOrSosId.packet_id) {
+      await fetchData();
+      showToast(`Accepted SOS #${dataOrSosId.victim_id}: Signed downlink dispatched!`);
+      return;
+    }
     try {
-      const res = await fetch(`/api/sos/${sosId}/accept`, {
+      const respId = responder?.responder_id || responder?.id || activeResponder?.id || 'RESP-NDRF-01';
+      const respName = responder?.responder_name || responder?.name || activeResponder?.name || 'Capt. A. Sharma';
+      const res = await fetch(`/api/sos/${dataOrSosId}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          responder_id: responder.responder_id,
-          responder_name: responder.responder_name,
+          responder_id: respId,
+          responder_name: respName,
           eta_minutes: 12,
         }),
       });
       if (res.ok) {
-        fetchData();
-        showToast(`Signed Ed25519 acknowledgement for ${sosId}`);
+        await fetchData();
+        showToast(`Signed Ed25519 acknowledgement for ${dataOrSosId}`);
       }
     } catch (err) {
       alert(`Accept failed: ${err.message}`);
