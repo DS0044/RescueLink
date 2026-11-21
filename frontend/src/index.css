@@ -1,0 +1,187 @@
+/* RescueLink Emergency Dark Theme with Emergency Orange Accents */
+:root {
+  --bg-primary: #0a0d14;
+  --bg-secondary: #111724;
+  --bg-card: #161e30;
+  --bg-card-hover: #1c263d;
+  --border-color: #243147;
+  --border-focus: #ff6600;
+
+  --accent-orange: #ff6600;
+  --accent-orange-hover: #ff771a;
+  --accent-orange-glow: rgba(255, 102, 0, 0.25);
+
+  --p1-critical: #ef4444;
+  --p1-bg: rgba(239, 68, 68, 0.15);
+  --p1-border: rgba(239, 68, 68, 0.4);
+
+  --p2-urgent: #f97316;
+  --p2-bg: rgba(249, 115, 22, 0.15);
+  --p2-border: rgba(249, 115, 22, 0.4);
+
+  --p3-help: #eab308;
+  --p3-bg: rgba(234, 179, 8, 0.15);
+  --p3-border: rgba(234, 179, 8, 0.4);
+
+  --p4-checkin: #06b6d4;
+  --p4-bg: rgba(6, 182, 212, 0.15);
+  --p4-border: rgba(6, 182, 212, 0.4);
+
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+
+  --success-green: #10b981;
+  --success-bg: rgba(16, 185, 129, 0.15);
+  --danger-red: #ef4444;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+code, pre, .font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-orange);
+}
+
+/* Custom Leaflet Map styling */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  background: #0f172a !important;
+  font-family: inherit;
+}
+.leaflet-popup-content-wrapper {
+  background: var(--bg-card) !important;
+  color: var(--text-main) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6) !important;
+}
+.leaflet-popup-tip {
+  background: var(--bg-card) !important;
+}
+
+/* Animations */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.02); }
+}
+
+@keyframes flash-glow {
+  0% { box-shadow: 0 0 0 0 rgba(255, 102, 0, 0.6); }
+  70% { box-shadow: 0 0 0 15px rgba(255, 102, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 102, 0, 0); }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s infinite ease-in-out;
+}
+
+.animate-glow {
+  animation: flash-glow 2s infinite;
+}
+
+/* Button & Card Utilities */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.btn-primary {
+  background-color: var(--accent-orange);
+  color: #ffffff;
+  border-color: #ff771a;
+}
+.btn-primary:hover {
+  background-color: var(--accent-orange-hover);
+  box-shadow: 0 0 16px var(--accent-orange-glow);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  background-color: var(--bg-card);
+  color: var(--text-main);
+  border-color: var(--border-color);
+}
+.btn-secondary:hover {
+  background-color: var(--bg-card-hover);
+  border-color: var(--text-dim);
+}
+
+.btn-danger {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.btn-danger:hover {
+  background-color: rgba(239, 68, 68, 0.35);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge-simulated {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.badge-real {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.25rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
