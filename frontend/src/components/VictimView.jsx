@@ -744,6 +744,9 @@ export default function VictimView({ onSosCreated, channelStatus }) {
         )}
       </div>
 
+      {/* Nearest Radio Tower Simulation (visual simulation container) */}
+      <section id="tower-sim-panel"></section>
+
       {/* Confirmation Modal */}
       {showConfirmModal && (
         <div className="modal-backdrop">

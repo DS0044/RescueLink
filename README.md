@@ -188,6 +188,14 @@ All high-resolution responsive screenshots are available in [docs/design/](file:
 | **Clustered Group View & Sub-Victims** | [dashboard_group_view.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/dashboard_group_view.png) |
 | **Offline Tactical Grid Canvas Fallback** | [dashboard_offline_fallback.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/dashboard_offline_fallback.png) |
 
+### Nearest Radio Tower Propagation & Selection Simulation
+| Simulation Step / View | Screenshot File |
+|---|---|
+| **Step 2: Radar Pulse & Tower Scanning** | [tower_sim_step2_scanning.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/tower_sim_step2_scanning.png) |
+| **Step 4: Nearest In-Service Tower Selection (-98 dBm)** | [tower_sim_step4_selected.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/tower_sim_step4_selected.png) |
+| **Step 7: SOS Delivered to Rescue Gateway** | [tower_sim_step7_delivered.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/tower_sim_step7_delivered.png) |
+| **Mobile Viewport (360px Responsive)** | [tower_sim_mobile_360px.png](file:///c:/Users/dd961/OneDrive/Desktop/RescueLink/docs/design/tower_sim_mobile_360px.png) |
+
 ### Victim Terminal Mission Lifecycle & Cryptographic Verification
 | State | Screenshot File |
 |---|---|
