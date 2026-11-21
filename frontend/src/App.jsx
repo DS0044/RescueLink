@@ -234,14 +234,14 @@ export default function App() {
   const handleTriggerScriptedStep = (stepNumber) => {
     setActiveScriptedStep(stepNumber);
     if (stepNumber === 1 || stepNumber === 2) {
-      setActiveView('victim');
+      navigateTo('victim');
     } else if (stepNumber === 3 || stepNumber === 4) {
-      setActiveView('dashboard');
+      navigateTo('dashboard');
       if (stepNumber === 4 && !activeResponder) {
         handleLogin('RESP-NDRF-01');
       }
     } else if (stepNumber === 5 || stepNumber === 6) {
-      setActiveView('victim');
+      navigateTo('victim');
     }
   };
 
@@ -252,7 +252,7 @@ export default function App() {
         <div className="page-container">
           <div className="app-header-inner">
             {/* Left: Brand & Logo */}
-            <div className="brand-group" onClick={() => setActiveView('landing')}>
+            <div className="brand-group" onClick={() => navigateTo('landing')}>
               <div className="brand-icon-box">
                 <Radio className="w-5 h-5 text-white" />
               </div>
@@ -268,7 +268,7 @@ export default function App() {
                 type="button"
                 role="tab"
                 aria-selected={activeView === 'landing'}
-                onClick={() => setActiveView('landing')}
+                onClick={() => navigateTo('landing')}
                 className={`nav-pill ${activeView === 'landing' ? 'active' : ''}`}
               >
                 <Home className="w-4 h-4" />
@@ -279,7 +279,7 @@ export default function App() {
                 type="button"
                 role="tab"
                 aria-selected={activeView === 'victim'}
-                onClick={() => setActiveView('victim')}
+                onClick={() => navigateTo('victim')}
                 className={`nav-pill ${activeView === 'victim' ? 'active' : ''}`}
               >
                 <Radio className="w-4 h-4" />
@@ -290,7 +290,7 @@ export default function App() {
                 type="button"
                 role="tab"
                 aria-selected={activeView === 'dashboard'}
-                onClick={() => setActiveView('dashboard')}
+                onClick={() => navigateTo('dashboard')}
                 className={`nav-pill ${activeView === 'dashboard' ? 'active' : ''}`}
               >
                 <MapPin className="w-4 h-4" />
@@ -302,7 +302,7 @@ export default function App() {
                 type="button"
                 role="tab"
                 aria-selected={activeView === 'demo'}
-                onClick={() => setActiveView('demo')}
+                onClick={() => navigateTo('demo')}
                 className={`nav-pill ${activeView === 'demo' ? 'active' : ''}`}
               >
                 <Sliders className="w-4 h-4" />
@@ -339,7 +339,7 @@ export default function App() {
       {/* Main Page Container */}
       <main className="page-container" style={{ flex: 1, paddingBottom: '32px' }}>
         {activeView === 'landing' && (
-          <LandingView onNavigate={(view) => setActiveView(view)} />
+          <LandingView onNavigate={(view) => navigateTo(view)} />
         )}
 
         {activeView === 'victim' && (
