@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Binary, Copy, Check, Info, ShieldAlert, Cpu } from 'lucide-react';
+import { Binary, Copy, Check, Info, Cpu } from 'lucide-react';
 
 export default function PacketInspector({ rawHex, breakdown, packetId }) {
   const [copied, setCopied] = useState(false);
@@ -13,97 +13,112 @@ export default function PacketInspector({ rawHex, breakdown, packetId }) {
 
   if (!rawHex) {
     return (
-      <div className="card text-center p-6 text-slate-400">
-        <Binary className="w-8 h-8 mx-auto mb-2 opacity-40 text-orange-400" />
-        <p className="text-sm">No raw packet selected for byte breakdown.</p>
+      <div className="card" style={{ textAlign: 'center', padding: '24px' }}>
+        <Binary className="w-8 h-8 text-orange-400" style={{ margin: '0 auto 8px', opacity: 0.4 }} />
+        <p className="text-helper">No raw binary packet selected for struct breakdown.</p>
       </div>
     );
   }
 
-  // Format hex into 2-character pairs for display
+  // Format hex into 2-character pairs
   const hexPairs = rawHex.match(/.{1,2}/g) || [];
 
   return (
-    <div className="card space-y-4" style={{ borderLeft: '4px solid #ff6600' }}>
-      <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-700">
-        <div className="flex items-center gap-2">
+    <div className="card card-accent-top" style={{ marginTop: '20px' }}>
+      <div className="card-header" style={{ marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Cpu className="w-5 h-5 text-orange-500" />
-          <h3 className="text-lg font-bold text-white tracking-wide">
-            IECE Compact 21-Byte Packet Inspector
-          </h3>
+          <h3 className="card-header-title">IECE 21-Byte Packet Inspector</h3>
         </div>
         {packetId && (
-          <span className="font-mono text-xs px-2 py-1 rounded bg-slate-800 text-orange-400 border border-slate-700">
+          <span className="font-mono text-caption" style={{ padding: '3px 8px', borderRadius: '6px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--accent-orange)' }}>
             {packetId}
           </span>
         )}
       </div>
 
       {/* Hex Stream Display */}
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+      <div style={{ marginBottom: '18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+          <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>
             Raw Binary Stream (Exactly 21 Bytes / 42 Hex Chars)
           </span>
           <button
+            type="button"
             onClick={handleCopy}
-            className="flex items-center gap-1 text-xs text-orange-400 hover:text-orange-300 font-medium px-2 py-1 rounded bg-orange-950/40 border border-orange-800/40"
+            className="btn btn-ghost"
+            style={{ height: '28px', padding: '0 8px', fontSize: '11px' }}
           >
             {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
-            {copied ? 'Copied' : 'Copy Hex'}
+            <span>{copied ? 'Copied' : 'Copy Hex'}</span>
           </button>
         </div>
 
-        <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 font-mono text-sm tracking-wider flex flex-wrap gap-1.5 select-all">
-          {hexPairs.map((pair, idx) => (
-            <span
-              key={idx}
-              className={`px-1.5 py-0.5 rounded font-bold transition-colors ${
-                idx === 0
-                  ? 'bg-purple-950/80 text-purple-300 border border-purple-800/50'
-                  : idx >= 1 && idx <= 4
-                  ? 'bg-blue-950/80 text-blue-300 border border-blue-800/50'
-                  : idx >= 5 && idx <= 8
-                  ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/50'
-                  : idx >= 9 && idx <= 12
-                  ? 'bg-teal-950/80 text-teal-300 border border-teal-800/50'
-                  : idx === 13
-                  ? 'bg-red-950/80 text-red-300 border border-red-800/50'
-                  : idx >= 14 && idx <= 15
-                  ? 'bg-amber-950/80 text-amber-300 border border-amber-800/50'
-                  : idx === 16
-                  ? 'bg-pink-950/80 text-pink-300 border border-pink-800/50'
-                  : 'bg-indigo-950/80 text-indigo-300 border border-indigo-800/50'
-              }`}
-              title={`Byte ${idx}: 0x${pair}`}
-            >
-              {pair}
-            </span>
-          ))}
+        <div style={{
+          backgroundColor: 'var(--bg-input)',
+          border: '1px solid var(--border-default)',
+          borderRadius: '8px',
+          padding: '12px',
+          fontFamily: 'var(--font-family-mono)',
+          fontSize: '13px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '6px',
+          userSelect: 'all',
+        }}>
+          {hexPairs.map((pair, idx) => {
+            let color = '#93A0BF';
+            let bg = 'rgba(255, 255, 255, 0.05)';
+            if (idx === 0) { color = '#D8B4FE'; bg = 'rgba(168, 85, 247, 0.15)'; }
+            else if (idx >= 1 && idx <= 4) { color = '#93C5FD'; bg = 'rgba(59, 130, 246, 0.15)'; }
+            else if (idx >= 5 && idx <= 8) { color = '#6EE7B7'; bg = 'rgba(16, 185, 129, 0.15)'; }
+            else if (idx >= 9 && idx <= 12) { color = '#5EEAD4'; bg = 'rgba(20, 184, 166, 0.15)'; }
+            else if (idx === 13) { color = '#FCA5A5'; bg = 'rgba(239, 68, 68, 0.15)'; }
+            else if (idx >= 14 && idx <= 15) { color = '#FDE047'; bg = 'rgba(234, 179, 8, 0.15)'; }
+            else if (idx === 16) { color = '#F9A8D4'; bg = 'rgba(244, 114, 182, 0.15)'; }
+            else { color = '#C7D2FE'; bg = 'rgba(99, 102, 241, 0.15)'; }
+
+            return (
+              <span
+                key={idx}
+                style={{
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  backgroundColor: bg,
+                  color: color,
+                  fontWeight: 700,
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                }}
+                title={`Byte ${idx}: 0x${pair}`}
+              >
+                {pair}
+              </span>
+            );
+          })}
         </div>
       </div>
 
       {/* Byte-by-byte Breakdown Table */}
       {breakdown && breakdown.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+        <div style={{ overflowX: 'auto', marginBottom: '16px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
             <thead>
-              <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase bg-slate-900/60">
-                <th className="py-2 px-3">Offset</th>
-                <th className="py-2 px-3">Hex</th>
-                <th className="py-2 px-3">Field</th>
-                <th className="py-2 px-3">Type</th>
-                <th className="py-2 px-3">Decoded Value</th>
+              <tr style={{ borderBottom: '1px solid var(--border-default)', color: 'var(--text-tertiary)', textTransform: 'uppercase', fontSize: '11px', fontWeight: 600 }}>
+                <th style={{ padding: '8px 10px' }}>Offset</th>
+                <th style={{ padding: '8px 10px' }}>Hex</th>
+                <th style={{ padding: '8px 10px' }}>Field</th>
+                <th style={{ padding: '8px 10px' }}>Type</th>
+                <th style={{ padding: '8px 10px' }}>Decoded Value</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60 font-mono">
+            <tbody style={{ fontFamily: 'var(--font-family-mono)' }}>
               {breakdown.map((item, idx) => (
-                <tr key={idx} className="hover:bg-slate-900/40">
-                  <td className="py-2.5 px-3 text-orange-400 font-semibold">{item.offset}</td>
-                  <td className="py-2.5 px-3 font-bold text-white tracking-widest">{item.bytes_hex}</td>
-                  <td className="py-2.5 px-3 font-sans font-medium text-slate-200">{item.field}</td>
-                  <td className="py-2.5 px-3 text-slate-400">{item.type}</td>
-                  <td className="py-2.5 px-3 font-sans font-semibold text-emerald-400">
+                <tr key={idx} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                  <td style={{ padding: '9px 10px', color: 'var(--accent-orange)', fontWeight: 600 }}>{item.offset}</td>
+                  <td style={{ padding: '9px 10px', fontWeight: 700, color: 'var(--text-primary)' }}>{item.bytes_hex}</td>
+                  <td style={{ padding: '9px 10px', fontFamily: 'var(--font-family-sans)', fontWeight: 500, color: 'var(--text-primary)' }}>{item.field}</td>
+                  <td style={{ padding: '9px 10px', color: 'var(--text-secondary)' }}>{item.type}</td>
+                  <td style={{ padding: '9px 10px', fontFamily: 'var(--font-family-sans)', fontWeight: 600, color: '#10B981' }}>
                     {item.description || item.raw_value}
                   </td>
                 </tr>
@@ -113,11 +128,10 @@ export default function PacketInspector({ rawHex, breakdown, packetId }) {
         </div>
       )}
 
-      <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-900/80 p-2.5 rounded border border-slate-800">
-        <Info className="w-4 h-4 text-orange-400 flex-shrink-0" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-subtle)', fontSize: '12px', color: 'var(--text-secondary)' }}>
+        <Info className="w-4 h-4 text-orange-400" style={{ flexShrink: 0 }} />
         <span>
-          <strong>IECE Optimization:</strong> The entire emergency payload fits in <strong>21 bytes</strong>,
-          minimizing LoRa Time-on-Air (ToA) to &lt;650ms at SF10 BW125 for maximum range and low battery drain.
+          <strong>IECE Compact Struct:</strong> Exactly 21 bytes minimize LoRa Time-on-Air to &lt;650ms at SF10 BW125.
         </span>
       </div>
     </div>

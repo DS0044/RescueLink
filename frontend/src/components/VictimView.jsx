@@ -14,7 +14,14 @@ import {
   RefreshCw,
   Cpu,
   KeyRound,
-  FileCode,
+  HeartPulse,
+  Waves,
+  Bandage,
+  Pill,
+  Compass,
+  Check,
+  HelpCircle,
+  X,
 } from 'lucide-react';
 import PacketInspector from './PacketInspector';
 import { verifySignedAcknowledgement } from '../utils/crypto';
@@ -27,16 +34,26 @@ export default function VictimView({ onSosCreated, channelStatus }) {
   const [longitude, setLongitude] = useState(80.2707);
   const [isManualGps, setIsManualGps] = useState(true);
   const [gpsAge, setGpsAge] = useState(6);
-  const [gpsStatus, setGpsStatus] = useState('Manual Fallback (Chennai Flood Basin)');
+  const [gpsStatus, setGpsStatus] = useState('Manual Fallback (Chennai Basin)');
 
   // Submission & Transmission state
   const [sending, setSending] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [activeSOS, setActiveSOS] = useState(null);
   const [transmissionStage, setTransmissionStage] = useState('IDLE'); // IDLE, LORA_TX, GATEWAY_RX, PENDING, ACCEPTED, DROPPED
   const [ackDetails, setAckDetails] = useState(null);
   const [cryptoVerification, setCryptoVerification] = useState(null);
   const [tampering, setTampering] = useState(false);
-  const [pollingActive, setPollingActive] = useState(false);
+
+  // Emergency options with icons and priority levels
+  const emergencyOptions = [
+    { id: 1, name: 'Heart Attack', priority: 'P1 Critical', icon: HeartPulse, priorityClass: 'p1' },
+    { id: 2, name: 'Trapped in Flood', priority: 'P2 Urgent', icon: Waves, priorityClass: 'p2' },
+    { id: 3, name: 'Injured / Trauma', priority: 'P2 Urgent', icon: Bandage, priorityClass: 'p2' },
+    { id: 4, name: 'Medical Need', priority: 'P3 Needs Help', icon: Pill, priorityClass: 'p3' },
+    { id: 5, name: 'Stranded (General)', priority: 'P3 Needs Help', icon: Compass, priorityClass: 'p3' },
+    { id: 6, name: 'Check-in / Safe', priority: 'P4 Check-in', icon: CheckCircle2, priorityClass: 'p4' },
+  ];
 
   // Acquire real browser GPS when requested
   const acquireBrowserGps = () => {
@@ -74,15 +91,13 @@ export default function VictimView({ onSosCreated, channelStatus }) {
           const data = await res.json();
           if (data.accepted && data.signed_ack) {
             setAckDetails(data);
-            // Verify Ed25519 signature on client side
             const verResult = await verifySignedAcknowledgement(data.signed_ack);
             setCryptoVerification(verResult);
 
             if (verResult.isValid) {
               setTransmissionStage('ACCEPTED');
             } else {
-              // Tampered or invalid signature!
-              setTransmissionStage('PENDING'); // MUST NOT BE ACCEPTED
+              setTransmissionStage('PENDING');
             }
           }
         }
@@ -94,8 +109,13 @@ export default function VictimView({ onSosCreated, channelStatus }) {
     return () => clearInterval(interval);
   }, [activeSOS, transmissionStage]);
 
-  const handleSendSOS = async (e) => {
+  const handleOpenConfirm = (e) => {
     e.preventDefault();
+    setShowConfirmModal(true);
+  };
+
+  const handleConfirmedSend = async () => {
+    setShowConfirmModal(false);
     setSending(true);
     setTransmissionStage('LORA_TX');
     setAckDetails(null);
@@ -139,18 +159,15 @@ export default function VictimView({ onSosCreated, channelStatus }) {
     if (!activeSOS) return;
     setTampering(true);
     try {
-      const res = await fetch(`/api/demo/tamper-ack/${activeSOS.packet_id}?tamper_type=modify_field`, {
+      await fetch(`/api/demo/tamper-ack/${activeSOS.packet_id}?tamper_type=modify_field`, {
         method: 'POST',
       });
-      const data = await res.json();
-      // Refetch ack to see the tampered payload
       const ackRes = await fetch(`/api/sos/${activeSOS.packet_id}/ack`);
       const ackData = await ackRes.json();
       setAckDetails(ackData);
 
       const verResult = await verifySignedAcknowledgement(ackData.signed_ack);
       setCryptoVerification(verResult);
-      // Because verification failed, transmission stage stays or reverts to PENDING
       setTransmissionStage('PENDING');
     } catch (err) {
       alert(`Tamper request failed: ${err.message}`);
@@ -166,314 +183,357 @@ export default function VictimView({ onSosCreated, channelStatus }) {
     setCryptoVerification(null);
   };
 
+  const selectedCondition = emergencyOptions.find((o) => o.id === emergencyType);
+
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      {/* Header Banner */}
-      <div className="card text-center relative overflow-hidden" style={{ borderTop: '4px solid #ff6600' }}>
-        <div className="flex items-center justify-center gap-2 mb-1">
-          <Radio className="w-6 h-6 text-orange-500 animate-pulse" />
-          <h2 className="text-2xl font-black text-white tracking-wide">VICTIM SOS BEACON</h2>
+    <div className="victim-page-wrapper">
+      <div className="victim-form-card">
+        {/* Page Hero Header */}
+        <div className="victim-hero-header">
+          <h1 className="victim-hero-title">Emergency SOS Terminal</h1>
+          <p className="victim-hero-desc">
+            Direct off-grid distress beacon. Encodes your survival telemetry into an ultra-compact 21-byte LoRa packet.
+          </p>
         </div>
-        <p className="text-sm text-slate-300">
-          Direct emergency transmitter terminal. Encodes telemetry into 21-byte LoRa packets.
-        </p>
 
-        <div className="mt-3 flex items-center justify-center gap-3">
-          <span className={`badge ${channelStatus?.is_simulated ? 'badge-simulated' : 'badge-real'}`}>
-            {channelStatus?.is_simulated ? 'SIMULATED LINK' : 'REAL LORA'}
-          </span>
-          <span className="text-xs text-slate-400 font-mono">
-            Modulation: CSS SF10 / BW 125kHz
-          </span>
-        </div>
-      </div>
-
-      {/* SOS Form or Active Transmission Status */}
-      {transmissionStage === 'IDLE' ? (
-        <form onSubmit={handleSendSOS} className="card space-y-5">
-          {/* Emergency Type Selector */}
-          <div>
-            <label className="block text-sm font-bold text-slate-200 mb-2 uppercase tracking-wide">
-              Emergency Condition
-            </label>
-            <select
-              value={emergencyType}
-              onChange={(e) => setEmergencyType(Number(e.target.value))}
-              className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-3 text-base font-semibold focus:border-orange-500 focus:outline-none"
-            >
-              <option value="1">⚠️ HEART ATTACK (P1 - Life Threatening)</option>
-              <option value="2">🌊 TRAPPED IN FLOOD (P2 - Urgent Rescue)</option>
-              <option value="3">🩹 INJURED / TRAUMA (P2 - Urgent Medical)</option>
-              <option value="4">💊 MEDICAL NEED (P3 - Assistance Required)</option>
-              <option value="5">🧗 STRANDED GENERAL (P3 - Needs Help)</option>
-              <option value="6">📡 CHECK-IN / ALL OK (P4 - Low Priority)</option>
-            </select>
-          </div>
-
-          {/* People Count */}
-          <div>
-            <label className="block text-sm font-bold text-slate-200 mb-2 uppercase tracking-wide flex items-center gap-2">
-              <Users className="w-4 h-4 text-orange-400" />
-              Number of People Needing Extraction
-            </label>
-            <div className="flex items-center gap-4">
-              <input
-                type="range"
-                min="1"
-                max="20"
-                value={peopleCount}
-                onChange={(e) => setPeopleCount(Number(e.target.value))}
-                className="w-full accent-orange-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
-              />
-              <span className="font-mono text-2xl font-black text-orange-400 w-12 text-center bg-slate-900 px-3 py-1 rounded border border-slate-700">
-                {peopleCount}
-              </span>
-            </div>
-          </div>
-
-          {/* Location & GPS Fix */}
-          <div className="space-y-3 pt-2 border-t border-slate-800">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-bold text-slate-200 uppercase tracking-wide flex items-center gap-1.5">
-                <Navigation className="w-4 h-4 text-orange-400" />
-                GNSS / GPS Coordinates
+        {/* SOS Form or Active Transmission Status */}
+        {transmissionStage === 'IDLE' ? (
+          <form onSubmit={handleOpenConfirm} className="card card-accent-top">
+            {/* Section 1: Emergency Condition */}
+            <div className="form-group">
+              <label className="form-section-title">
+                <AlertTriangle className="w-5 h-5 text-orange-500" />
+                <span>1. Emergency Condition</span>
               </label>
-              <button
-                type="button"
-                onClick={acquireBrowserGps}
-                className="text-xs text-orange-400 hover:text-orange-300 font-semibold px-2.5 py-1 rounded bg-orange-950/40 border border-orange-800/40 flex items-center gap-1"
-              >
-                <RefreshCw className="w-3 h-3" />
-                Use Live Browser GPS
-              </button>
+              <div className="emergency-grid" role="radiogroup" aria-label="Select emergency condition">
+                {emergencyOptions.map((opt) => {
+                  const Icon = opt.icon;
+                  const isSelected = emergencyType === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      onClick={() => setEmergencyType(opt.id)}
+                      className={`emergency-card-btn ${isSelected ? 'selected' : ''}`}
+                    >
+                      <div className="emergency-card-top">
+                        <Icon className="emergency-card-icon" />
+                        <span className={`badge-priority ${opt.priorityClass}`}>
+                          {opt.priority}
+                        </span>
+                      </div>
+                      <span className="emergency-card-name">{opt.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">Latitude (°N/S)</label>
+            {/* Section 2: People Extraction */}
+            <div className="form-group">
+              <label className="form-section-title">
+                <Users className="w-5 h-5 text-orange-500" />
+                <span>2. People Needing Extraction</span>
+              </label>
+
+              <div className="people-control-card">
+                <div className="people-stepper-row">
+                  <button
+                    type="button"
+                    disabled={peopleCount <= 1}
+                    onClick={() => setPeopleCount((p) => Math.max(1, p - 1))}
+                    className="stepper-btn"
+                    aria-label="Decrease people count"
+                  >
+                    -
+                  </button>
+
+                  <div className="people-count-display">
+                    <span className="people-number-large">{peopleCount}</span>
+                    <span className="people-label-small">
+                      {peopleCount === 1 ? 'Person' : 'People Total'}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={peopleCount >= 20}
+                    onClick={() => setPeopleCount((p) => Math.min(20, p + 1))}
+                    className="stepper-btn"
+                    aria-label="Increase people count"
+                  >
+                    +
+                  </button>
+                </div>
+
                 <input
-                  type="number"
-                  step="0.000001"
-                  value={latitude}
-                  onChange={(e) => {
-                    setLatitude(e.target.value);
-                    setIsManualGps(true);
-                  }}
-                  className="w-full bg-slate-900 border border-slate-700 text-white rounded p-2.5 text-sm font-mono focus:border-orange-500 focus:outline-none"
-                  required
+                  type="range"
+                  min="1"
+                  max="20"
+                  value={peopleCount}
+                  onChange={(e) => setPeopleCount(Number(e.target.value))}
+                  className="custom-range-slider"
+                  aria-label="People count slider"
                 />
               </div>
-              <div>
-                <label className="text-xs text-slate-400 block mb-1">Longitude (°E/W)</label>
-                <input
-                  type="number"
-                  step="0.000001"
-                  value={longitude}
-                  onChange={(e) => {
-                    setLongitude(e.target.value);
-                    setIsManualGps(true);
-                  }}
-                  className="w-full bg-slate-900 border border-slate-700 text-white rounded p-2.5 text-sm font-mono focus:border-orange-500 focus:outline-none"
-                  required
-                />
-              </div>
             </div>
 
-            <p className="text-xs text-slate-400 flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-ping"></span>
-              <span>{gpsStatus}</span>
-            </p>
-          </div>
-
-          {/* Big Emergency SOS Button */}
-          <button
-            type="submit"
-            disabled={sending}
-            className="w-full btn-primary py-4 text-xl font-black uppercase tracking-wider rounded-xl shadow-lg flex items-center justify-center gap-3 transition-transform hover:scale-[1.01]"
-            style={{
-              background: 'linear-gradient(135deg, #ff6600 0%, #e65100 100%)',
-              border: '2px solid #ff8533',
-              boxShadow: '0 0 25px rgba(255, 102, 0, 0.4)',
-            }}
-          >
-            <AlertTriangle className="w-6 h-6 animate-bounce" />
-            {sending ? 'Transmitting Over LoRa...' : 'SEND EMERGENCY SOS NOW'}
-          </button>
-        </form>
-      ) : (
-        /* Active Transmission Status Display */
-        <div className="card space-y-6">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-            <div>
-              <span className="text-xs text-slate-400 uppercase tracking-wider block font-semibold">Active Transmission</span>
-              <span className="font-mono text-sm font-bold text-white">{activeSOS?.packet_id}</span>
-            </div>
-            <button
-              onClick={resetForm}
-              className="text-xs text-slate-300 hover:text-white px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 flex items-center gap-1 border border-slate-700"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              New SOS
-            </button>
-          </div>
-
-          {/* Stepper Progress Bar */}
-          <div className="grid grid-cols-4 gap-2 text-center text-xs font-bold">
-            <div className="p-2.5 rounded bg-emerald-950/60 border border-emerald-600/50 text-emerald-300 flex flex-col items-center gap-1">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>1. SENT</span>
-            </div>
-            <div className={`p-2.5 rounded border flex flex-col items-center gap-1 ${
-              transmissionStage === 'DROPPED'
-                ? 'bg-red-950/60 border-red-600/50 text-red-300'
-                : 'bg-emerald-950/60 border-emerald-600/50 text-emerald-300'
-            }`}>
-              {transmissionStage === 'DROPPED' ? (
-                <AlertCircle className="w-4 h-4 text-red-400" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              )}
-              <span>2. GATEWAY RX</span>
-            </div>
-            <div className={`p-2.5 rounded border flex flex-col items-center gap-1 ${
-              transmissionStage === 'PENDING'
-                ? 'bg-amber-950/60 border-amber-600/50 text-amber-300 animate-pulse'
-                : transmissionStage === 'ACCEPTED'
-                ? 'bg-emerald-950/60 border-emerald-600/50 text-emerald-300'
-                : 'bg-slate-900 border-slate-800 text-slate-500'
-            }`}>
-              <Clock className="w-4 h-4" />
-              <span>3. PENDING</span>
-            </div>
-            <div className={`p-2.5 rounded border flex flex-col items-center gap-1 ${
-              transmissionStage === 'ACCEPTED'
-                ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 font-extrabold shadow-lg'
-                : 'bg-slate-900 border-slate-800 text-slate-500'
-            }`}>
-              <ShieldCheck className="w-4 h-4" />
-              <span>4. ACCEPTED</span>
-            </div>
-          </div>
-
-          {/* Stage Details Card */}
-          {transmissionStage === 'DROPPED' && (
-            <div className="bg-red-950/50 border border-red-700/60 p-4 rounded-xl text-center space-y-2">
-              <AlertCircle className="w-8 h-8 text-red-400 mx-auto" />
-              <h4 className="text-lg font-bold text-red-300">Packet Dropped in Simulated Channel</h4>
-              <p className="text-sm text-slate-300">{activeSOS?.reason}</p>
-              <button
-                onClick={handleSendSOS}
-                className="btn btn-danger text-sm font-semibold mt-2"
-              >
-                Retry Transmission
-              </button>
-            </div>
-          )}
-
-          {transmissionStage === 'PENDING' && (
-            <div className="bg-amber-950/30 border border-amber-700/40 p-4 rounded-xl space-y-2">
-              <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-amber-400 animate-spin" />
-                <h4 className="text-base font-bold text-amber-300">
-                  SOS Pending Responder Triage
-                </h4>
-              </div>
-              <p className="text-sm text-slate-300">
-                Your 21-byte emergency packet was validated by the gateway and queued in the IECE engine.
-                Awaiting digitally signed acceptance from an authorized rescue commander.
-              </p>
-              <div className="p-3 bg-slate-950/60 rounded border border-slate-800 text-xs font-mono text-slate-400">
-                Assigned Cluster: <span className="text-orange-400 font-bold">{activeSOS?.group_id}</span>
-                <br />
-                Cluster Summary: <span className="text-slate-200">{activeSOS?.cluster_card}</span>
-              </div>
-            </div>
-          )}
-
-          {/* Accepted & Cryptographically Verified Banner */}
-          {transmissionStage === 'ACCEPTED' && ackDetails && (
-            <div className="bg-emerald-950/40 border-2 border-emerald-500/70 p-5 rounded-xl space-y-3 shadow-xl">
-              <div className="flex items-center gap-3">
-                <ShieldCheck className="w-8 h-8 text-emerald-400 flex-shrink-0" />
-                <div>
-                  <h4 className="text-lg font-extrabold text-emerald-300">
-                    HELP ACCEPTED & RESCUE TEAM DISPATCHED
-                  </h4>
-                  <p className="text-xs text-emerald-200 font-medium">
-                    Verified through Ed25519 asymmetric cryptographic signature
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 text-xs font-mono bg-slate-950/70 p-3 rounded-lg border border-slate-800">
-                <div>
-                  <span className="text-slate-400 block">Lead Responder:</span>
-                  <span className="font-bold text-white text-sm">{ackDetails.responder_name}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block">Estimated Arrival (ETA):</span>
-                  <span className="font-bold text-emerald-400 text-sm">~{ackDetails.eta_minutes} minutes</span>
-                </div>
-                <div className="col-span-2 pt-2 border-t border-slate-800/80">
-                  <span className="text-slate-400 block">Ed25519 Signature (Hex):</span>
-                  <span className="text-slate-300 break-all select-all text-[11px]">
-                    {ackDetails.signed_ack?.signature_hex}
-                  </span>
-                </div>
-              </div>
-
-              {/* Client-side Verification Feedback */}
-              {cryptoVerification && (
-                <div className="flex items-center gap-2 text-xs bg-emerald-900/30 text-emerald-300 p-2.5 rounded border border-emerald-700/50">
-                  <KeyRound className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                  <span>{cryptoVerification.message}</span>
-                </div>
-              )}
-
-              {/* Demo Tamper Testing Control */}
-              <div className="pt-2 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2">
-                <span className="text-xs text-slate-400">
-                  Evaluator Test: Verify cryptographic tamper rejection
+            {/* Section 3: Location & Coordinates */}
+            <div className="form-group">
+              <div className="card-header" style={{ marginBottom: '14px' }}>
+                <span className="form-section-title" style={{ margin: 0 }}>
+                  <Navigation className="w-5 h-5 text-orange-500" />
+                  <span>3. Location & GNSS Coordinates</span>
                 </span>
                 <button
                   type="button"
-                  onClick={handleTamperTest}
-                  disabled={tampering}
-                  className="btn-danger text-xs px-3 py-1.5 rounded flex items-center gap-1.5 font-bold"
+                  onClick={acquireBrowserGps}
+                  className="btn btn-ghost"
+                  style={{ height: '32px', padding: '0 10px', fontSize: '12px' }}
                 >
-                  <ShieldX className="w-3.5 h-3.5" />
-                  {tampering ? 'Tampering...' : 'Tamper Acknowledgement'}
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Use Live Browser GPS</span>
                 </button>
               </div>
-            </div>
-          )}
 
-          {/* Tamper Rejection State */}
-          {cryptoVerification && !cryptoVerification.isValid && (
-            <div className="bg-red-950/60 border-2 border-red-500 p-4 rounded-xl space-y-2">
-              <div className="flex items-center gap-2">
-                <ShieldX className="w-6 h-6 text-red-400 flex-shrink-0" />
-                <h4 className="text-base font-black text-red-300 uppercase tracking-wide">
-                  FORGED / TAMPERED ACKNOWLEDGEMENT REJECTED!
-                </h4>
+              <div className="location-inputs-grid">
+                <div>
+                  <label htmlFor="latitude" className="form-label">
+                    <span>Latitude</span>
+                  </label>
+                  <div className="input-suffix-wrapper">
+                    <input
+                      id="latitude"
+                      type="number"
+                      step="0.000001"
+                      value={latitude}
+                      onChange={(e) => {
+                        setLatitude(e.target.value);
+                        setIsManualGps(true);
+                      }}
+                      className="form-control-input font-mono"
+                      required
+                    />
+                    <span className="input-suffix">° N/S</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="longitude" className="form-label">
+                    <span>Longitude</span>
+                  </label>
+                  <div className="input-suffix-wrapper">
+                    <input
+                      id="longitude"
+                      type="number"
+                      step="0.000001"
+                      value={longitude}
+                      onChange={(e) => {
+                        setLongitude(e.target.value);
+                        setIsManualGps(true);
+                      }}
+                      className="form-control-input font-mono"
+                      required
+                    />
+                    <span className="input-suffix">° E/W</span>
+                  </div>
+                </div>
               </div>
-              <p className="text-xs text-slate-200">
-                {cryptoVerification.message}
-              </p>
-              <div className="text-xs bg-slate-950/80 p-2 rounded text-red-300 font-mono">
-                Security Policy: Terminal refuses to display "Accepted" without an authentic, mathematically sound Ed25519 signature from an authorized rescue authority. Status remains <strong>PENDING</strong>.
+
+              <div className="gps-status-badge">
+                <span className="status-dot" style={{ backgroundColor: '#10B981' }}></span>
+                <span>{gpsStatus}</span>
               </div>
             </div>
-          )}
 
-          {/* Live Packet Breakdown */}
-          {activeSOS?.raw_hex && (
-            <PacketInspector
-              rawHex={activeSOS.raw_hex}
-              breakdown={activeSOS.breakdown}
-              packetId={activeSOS.packet_id}
-            />
-          )}
+            {/* Primary Action Button */}
+            <button type="submit" disabled={sending} className="btn-emergency-sos">
+              <AlertTriangle className="w-6 h-6" />
+              <span>{sending ? 'Encoding 21-Byte Packet...' : 'SEND EMERGENCY SOS NOW'}</span>
+            </button>
+          </form>
+        ) : (
+          /* Active Transmission State */
+          <div className="card card-accent-top">
+            <div className="card-header">
+              <div>
+                <span className="text-helper" style={{ display: 'block' }}>Active Emergency Transmission</span>
+                <span className="font-mono" style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                  {activeSOS?.packet_id}
+                </span>
+              </div>
+              <button onClick={resetForm} className="btn btn-secondary" style={{ height: '36px', padding: '0 12px', fontSize: '13px' }}>
+                <RotateCcw className="w-4 h-4" />
+                <span>New SOS</span>
+              </button>
+            </div>
+
+            {/* 4-Step Progress Stepper */}
+            <div className="stepper-progress-grid" aria-live="polite">
+              <div className="stepper-step-card completed">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>1. Sent</span>
+              </div>
+              <div className={`stepper-step-card ${transmissionStage === 'DROPPED' ? 'dropped' : 'completed'}`}>
+                {transmissionStage === 'DROPPED' ? <AlertCircle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                <span>2. Gateway RX</span>
+              </div>
+              <div className={`stepper-step-card ${transmissionStage === 'PENDING' ? 'active' : transmissionStage === 'ACCEPTED' ? 'completed' : ''}`}>
+                <Clock className="w-4 h-4" />
+                <span>3. Pending</span>
+              </div>
+              <div className={`stepper-step-card ${transmissionStage === 'ACCEPTED' ? 'completed' : ''}`}>
+                <ShieldCheck className="w-4 h-4" />
+                <span>4. Accepted</span>
+              </div>
+            </div>
+
+            {/* Packet Dropped Banner */}
+            {transmissionStage === 'DROPPED' && (
+              <div className="card" style={{ backgroundColor: 'var(--color-danger-subtle)', borderColor: 'var(--color-danger)', marginBottom: '24px', textAlign: 'center' }}>
+                <AlertCircle className="w-8 h-8 text-red-400" style={{ margin: '0 auto 8px' }} />
+                <h4 style={{ fontSize: '18px', fontWeight: 700, color: '#FCA5A5' }}>Packet Dropped in Simulated Channel</h4>
+                <p className="text-helper" style={{ margin: '4px 0 16px' }}>{activeSOS?.reason}</p>
+                <button onClick={handleConfirmedSend} className="btn btn-danger" style={{ height: '40px' }}>
+                  Retry Transmission
+                </button>
+              </div>
+            )}
+
+            {/* Pending State */}
+            {transmissionStage === 'PENDING' && (
+              <div className="card" style={{ backgroundColor: 'var(--color-warning-subtle)', borderColor: 'var(--color-warning)', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <Clock className="w-5 h-5 text-amber-400" />
+                  <h4 style={{ fontSize: '16px', fontWeight: 700, color: '#FCD34D' }}>
+                    SOS Pending Responder Triage
+                  </h4>
+                </div>
+                <p className="text-helper" style={{ color: '#E8EDF7', marginBottom: '14px' }}>
+                  Your 21-byte emergency packet was validated by the gateway and prioritized in the IECE engine. 
+                  Awaiting digitally signed acceptance from an authorized rescue commander.
+                </p>
+                <div style={{ padding: '10px 14px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-subtle)', fontSize: '13px', fontFamily: 'var(--font-family-mono)' }}>
+                  <div>Assigned Cluster: <strong style={{ color: 'var(--accent-orange)' }}>{activeSOS?.group_id}</strong></div>
+                  <div style={{ marginTop: '4px', color: 'var(--text-secondary)' }}>{activeSOS?.cluster_card}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Accepted & Verified State */}
+            {transmissionStage === 'ACCEPTED' && ackDetails && (
+              <div className="ack-verified-card">
+                <div className="ack-verified-header">
+                  <ShieldCheck className="w-8 h-8 text-emerald-400" style={{ flexShrink: 0 }} />
+                  <div>
+                    <h4 className="ack-verified-title">Help Accepted & Rescue Team Dispatched</h4>
+                    <p className="text-helper" style={{ color: '#A7F3D0' }}>
+                      Verified through Ed25519 asymmetric cryptographic signature
+                    </p>
+                  </div>
+                </div>
+
+                <div className="ack-meta-grid">
+                  <div className="ack-meta-item">
+                    <span className="ack-meta-label">Lead Responder</span>
+                    <span className="ack-meta-value">{ackDetails.responder_name}</span>
+                  </div>
+                  <div className="ack-meta-item">
+                    <span className="ack-meta-label">Estimated Arrival</span>
+                    <span className="ack-meta-value" style={{ color: '#10B981' }}>~{ackDetails.eta_minutes} Minutes</span>
+                  </div>
+                  <div className="ack-sig-preview">
+                    Ed25519 Signature: {ackDetails.signed_ack?.signature_hex}
+                  </div>
+                </div>
+
+                {cryptoVerification && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', padding: '10px', borderRadius: '8px', backgroundColor: 'rgba(16, 185, 129, 0.12)', border: '1px solid var(--color-success-border)', color: '#6EE7B7', marginBottom: '16px' }}>
+                    <KeyRound className="w-4 h-4 text-emerald-400" />
+                    <span>{cryptoVerification.message}</span>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)' }}>
+                  <span className="text-helper">Evaluator Test: Verify cryptographic tamper rejection</span>
+                  <button
+                    type="button"
+                    onClick={handleTamperTest}
+                    disabled={tampering}
+                    className="btn btn-danger"
+                    style={{ height: '36px', padding: '0 12px', fontSize: '12px' }}
+                  >
+                    <ShieldX className="w-4 h-4" />
+                    <span>{tampering ? 'Tampering...' : 'Tamper Acknowledgement'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Tamper Rejection Alert */}
+            {cryptoVerification && !cryptoVerification.isValid && (
+              <div className="ack-tamper-rejected-card">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <ShieldX className="w-5 h-5 text-red-400" />
+                  <h4 style={{ fontSize: '16px', fontWeight: 700, color: '#FCA5A5' }}>
+                    Forged / Tampered Acknowledgement Rejected!
+                  </h4>
+                </div>
+                <p className="text-helper" style={{ color: '#E8EDF7', marginBottom: '10px' }}>
+                  {cryptoVerification.message}
+                </p>
+                <div style={{ padding: '8px 12px', borderRadius: '6px', backgroundColor: 'var(--bg-input)', color: '#F87171', fontSize: '12px', fontFamily: 'var(--font-family-mono)' }}>
+                  Security Policy: Terminal refuses to display "Accepted" without an authentic, mathematically sound Ed25519 signature from an authorized rescue authority. Status remains <strong>PENDING</strong>.
+                </div>
+              </div>
+            )}
+
+            {/* 21-Byte Packet Breakdown Inspector */}
+            {activeSOS?.raw_hex && (
+              <PacketInspector
+                rawHex={activeSOS.raw_hex}
+                breakdown={activeSOS.breakdown}
+                packetId={activeSOS.packet_id}
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Confirmation Step Modal */}
+      {showConfirmModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(6px)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div className="card" style={{ maxWidth: '440px', width: '100%', borderColor: 'var(--accent-orange)' }}>
+            <div className="card-header" style={{ marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertTriangle className="w-5 h-5 text-orange-500" />
+                <h3 className="card-header-title">Confirm SOS Broadcast</h3>
+              </div>
+              <button onClick={() => setShowConfirmModal(false)} className="icon-btn-round" aria-label="Close confirmation dialog">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-body" style={{ marginBottom: '16px' }}>
+              Are you sure you want to broadcast an emergency distress signal for <strong>{peopleCount} {peopleCount === 1 ? 'person' : 'people'}</strong> experiencing <strong>{selectedCondition?.name}</strong>?
+            </p>
+
+            <div style={{ padding: '10px 14px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-subtle)', fontSize: '13px', fontFamily: 'var(--font-family-mono)', marginBottom: '20px' }}>
+              <div>Coordinates: {Number(latitude).toFixed(4)}° N, {Number(longitude).toFixed(4)}° E</div>
+              <div style={{ marginTop: '4px' }}>Priority: <span style={{ color: 'var(--accent-orange)', fontWeight: 700 }}>{selectedCondition?.priority}</span></div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button type="button" onClick={() => setShowConfirmModal(false)} className="btn btn-secondary">
+                Cancel
+              </button>
+              <button type="button" onClick={handleConfirmedSend} className="btn btn-primary" style={{ backgroundColor: '#DC2626', borderColor: '#EF4444' }}>
+                Yes, Broadcast SOS Now
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

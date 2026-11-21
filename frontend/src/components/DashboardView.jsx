@@ -16,6 +16,10 @@ import {
   Eye,
   KeyRound,
   Compass,
+  Activity,
+  HeartPulse,
+  Flame,
+  X,
 } from 'lucide-react';
 import PacketInspector from './PacketInspector';
 
@@ -39,19 +43,25 @@ export default function DashboardView({
   const leafletMap = useRef(null);
   const markersRef = useRef({});
 
+  // Stats calculation
+  const totalReports = reports.length;
+  const criticalP1Count = reports.filter((r) => r.severity === 1).length;
+  const totalClusters = groups.length;
+  const acceptedCount = reports.filter((r) => r.status === 'accepted').length;
+
   // Initialize Leaflet Map
   useEffect(() => {
     if (!mapRef.current) return;
-
-    // Check if L is loaded from unpkg
     const L = window.L;
     if (!L) return;
 
     if (!leafletMap.current) {
-      // Chennai flood basin center
-      const map = L.map(mapRef.current).setView([13.0827, 80.2707], 13);
+      const map = L.map(mapRef.current, {
+        zoomControl: true,
+      }).setView([13.0827, 80.2707], 13);
+
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors | RescueLink Offline Layer',
+        attribution: '&copy; OpenStreetMap contributors | RescueLink',
         maxZoom: 18,
       }).addTo(map);
 
@@ -64,13 +74,12 @@ export default function DashboardView({
     Object.values(markersRef.current).forEach((m) => m.remove());
     markersRef.current = {};
 
-    // Priority color mapping
     const getPriorityColor = (sev) => {
       switch (sev) {
-        case 1: return '#ef4444'; // Red P1
-        case 2: return '#f97316'; // Orange P2
-        case 3: return '#eab308'; // Yellow P3
-        default: return '#06b6d4'; // Cyan P4
+        case 1: return '#EF4444'; // Red P1
+        case 2: return '#FF6A1A'; // Orange P2
+        case 3: return '#EAB308'; // Yellow P3
+        default: return '#10B981'; // Green P4
       }
     };
 
@@ -79,21 +88,20 @@ export default function DashboardView({
       const color = getPriorityColor(group.severity);
       const isMulti = group.report_count > 1;
 
-      // Custom HTML Marker for Leaflet
       const iconHtml = `
         <div style="
           background: ${color};
           color: white;
-          width: ${isMulti ? '38px' : '28px'};
-          height: ${isMulti ? '38px' : '28px'};
+          width: ${isMulti ? '36px' : '26px'};
+          height: ${isMulti ? '36px' : '26px'};
           border-radius: 50%;
           display: flex;
           align-items: center;
           justify-content: center;
           font-weight: 800;
           font-size: ${isMulti ? '13px' : '11px'};
-          border: 3px solid #0f172a;
-          box-shadow: 0 0 15px ${color};
+          border: 2px solid #0A0F1E;
+          box-shadow: 0 0 12px ${color};
           cursor: pointer;
         ">
           ${isMulti ? group.total_people : 'SOS'}
@@ -103,18 +111,18 @@ export default function DashboardView({
       const customIcon = L.divIcon({
         className: 'custom-leaflet-marker',
         html: iconHtml,
-        iconSize: [isMulti ? 38 : 28, isMulti ? 38 : 28],
-        iconAnchor: [isMulti ? 19 : 14, isMulti ? 19 : 14],
+        iconSize: [isMulti ? 36 : 26, isMulti ? 36 : 26],
+        iconAnchor: [isMulti ? 18 : 13, isMulti ? 18 : 13],
       });
 
       const marker = L.marker([group.centroid_lat, group.centroid_lon], { icon: customIcon })
         .addTo(map)
         .bindPopup(`
-          <div style="font-family: inherit; font-size: 12px; line-height: 1.4;">
-            <strong style="color: ${color}; font-size: 13px;">${group.emergency_type_label}</strong><br/>
-            <span style="font-weight: bold; color: #fff;">${group.summary_card}</span><br/>
-            <span style="color: #94a3b8;">Status: ${group.status.toUpperCase()}</span><br/>
-            <span style="color: #94a3b8;">Coords: ${group.centroid_lat.toFixed(4)}, ${group.centroid_lon.toFixed(4)}</span>
+          <div style="font-family: Inter, sans-serif; font-size: 13px; line-height: 1.4; color: #E8EDF7; background: #121A2F; padding: 4px;">
+            <strong style="color: ${color}; font-size: 14px;">${group.emergency_type_label}</strong><br/>
+            <span style="font-weight: 700; color: #FFF;">${group.summary_card}</span><br/>
+            <span style="color: #93A0BF;">Status: ${group.status.toUpperCase()}</span><br/>
+            <span style="color: #627193; font-family: monospace;">${group.centroid_lat.toFixed(4)}, ${group.centroid_lon.toFixed(4)}</span>
           </div>
         `);
 
@@ -146,141 +154,254 @@ export default function DashboardView({
   };
 
   return (
-    <div className="space-y-6">
-      {/* Top Bar with Responder Status */}
-      <div className="card flex items-center justify-between flex-wrap gap-4" style={{ borderLeft: '4px solid #ff6600' }}>
-        <div>
-          <div className="flex items-center gap-2">
-            <Shield className="w-6 h-6 text-orange-500" />
-            <h2 className="text-xl font-black text-white tracking-wide">RESCUE COORDINATION DASHBOARD</h2>
+    <div className="dashboard-page-wrapper">
+      {/* 4 Compact Stat Cards on Top */}
+      <div className="dashboard-stats-grid">
+        <div className="stat-card-compact">
+          <div className="stat-card-content">
+            <span className="stat-card-label">Total SOS Reports</span>
+            <span className="stat-card-number">{totalReports}</span>
           </div>
-          <p className="text-xs text-slate-300">
-            Intelligent Emergency Communication Engine (IECE) prioritized triage & real-time dispatch map
-          </p>
+          <div className="stat-card-icon-box" style={{ backgroundColor: 'rgba(255, 106, 26, 0.12)', color: 'var(--accent-orange)' }}>
+            <Radio className="w-5 h-5" />
+          </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          {activeResponder ? (
-            <div className="flex items-center gap-3 bg-slate-900/90 px-3.5 py-2 rounded-lg border border-slate-700">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
-                <div className="text-left text-xs">
-                  <span className="text-emerald-400 font-bold block">{activeResponder.responder_name}</span>
-                  <span className="text-slate-400 font-mono text-[11px]">{activeResponder.role}</span>
-                </div>
-              </div>
-              <button
-                onClick={onLogout}
-                className="text-xs text-slate-400 hover:text-red-400 ml-2"
-                title="Sign out responder"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowLoginModal(true)}
-              className="btn btn-primary text-xs py-2 px-3 flex items-center gap-1.5"
-            >
-              <LogIn className="w-4 h-4" />
-              Responder Login
-            </button>
-          )}
+        <div className="stat-card-compact">
+          <div className="stat-card-content">
+            <span className="stat-card-label">Critical P1 Triage</span>
+            <span className="stat-card-number" style={{ color: '#EF4444' }}>{criticalP1Count}</span>
+          </div>
+          <div className="stat-card-icon-box" style={{ backgroundColor: 'var(--color-danger-subtle)', color: 'var(--color-danger)' }}>
+            <HeartPulse className="w-5 h-5" />
+          </div>
+        </div>
 
-          <span className={`badge ${channelStatus?.is_simulated ? 'badge-simulated' : 'badge-real'}`}>
-            {channelStatus?.is_simulated ? 'SIMULATED LINK' : 'REAL LORA'}
-          </span>
+        <div className="stat-card-compact">
+          <div className="stat-card-content">
+            <span className="stat-card-label">Clustered Groups</span>
+            <span className="stat-card-number" style={{ color: '#FCD34D' }}>{totalClusters}</span>
+          </div>
+          <div className="stat-card-icon-box" style={{ backgroundColor: 'var(--color-warning-subtle)', color: '#F59E0B' }}>
+            <Layers className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div className="stat-card-compact">
+          <div className="stat-card-content">
+            <span className="stat-card-label">Accepted Missions</span>
+            <span className="stat-card-number" style={{ color: '#10B981' }}>{acceptedCount}</span>
+          </div>
+          <div className="stat-card-icon-box" style={{ backgroundColor: 'var(--color-success-subtle)', color: 'var(--color-success)' }}>
+            <ShieldCheck className="w-5 h-5" />
+          </div>
         </div>
       </div>
 
-      {/* Main Grid: Left = Map & Cluster Summary, Right = Priority Queue */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Interactive Leaflet Map */}
-        <div className="lg:col-span-7 space-y-4">
-          <div className="card p-2 h-[450px] relative rounded-xl overflow-hidden border border-slate-700">
-            <div ref={mapRef} className="w-full h-full rounded-lg" />
-            <div className="absolute top-4 right-4 z-[1000] bg-slate-900/90 backdrop-blur p-2.5 rounded-lg border border-slate-700 text-xs space-y-1 font-semibold">
-              <div className="text-[11px] text-slate-400 uppercase tracking-wider mb-1">Priority Legend</div>
-              <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-red-500"></span> P1 Life Threatening</div>
-              <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-orange-500"></span> P2 Urgent Rescue</div>
-              <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-yellow-500"></span> P3 Needs Help</div>
-              <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-cyan-500"></span> P4 Check-in</div>
+      {/* Main Two-Column Layout (420px Left, Map Right) */}
+      <div className="dashboard-main-grid">
+        {/* Left Column: Triage List & Cluster Groups */}
+        <div className="triage-column">
+          <div className="triage-tabs-row" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'triage'}
+              onClick={() => setActiveTab('triage')}
+              className={`triage-tab-btn ${activeTab === 'triage' ? 'active' : ''}`}
+            >
+              <Clock className="w-4 h-4" />
+              <span>Priority Triage ({reports.length})</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'groups'}
+              onClick={() => setActiveTab('groups')}
+              className={`triage-tab-btn ${activeTab === 'groups' ? 'active' : ''}`}
+            >
+              <Layers className="w-4 h-4" />
+              <span>Clusters ({groups.length})</span>
+            </button>
+          </div>
+
+          {activeTab === 'triage' && (
+            <div className="triage-cards-scrollable">
+              {reports.length === 0 ? (
+                <div className="card" style={{ textAlign: 'center', padding: '36px 20px' }}>
+                  <Clock className="w-8 h-8 text-orange-400" style={{ margin: '0 auto 8px', opacity: 0.5 }} />
+                  <p className="text-muted">No active emergencies in triage queue.</p>
+                </div>
+              ) : (
+                reports.map((item) => {
+                  const isSelected = selectedSos?.packet_id === item.packet_id;
+                  const priorityClass = item.severity === 1 ? 'p1' : item.severity === 2 ? 'p2' : item.severity === 3 ? 'p3' : 'p4';
+                  return (
+                    <div
+                      key={item.packet_id}
+                      onClick={() => setSelectedSos(item)}
+                      className={`sos-card-item ${isSelected ? 'selected' : ''}`}
+                    >
+                      <div className="sos-card-top">
+                        <span className={`badge-priority ${priorityClass}`}>
+                          {item.severity_label}
+                        </span>
+                        <span className="badge-priority" style={{
+                          backgroundColor: item.status === 'accepted' ? 'var(--color-success-subtle)' : 'var(--color-warning-subtle)',
+                          color: item.status === 'accepted' ? '#6EE7B7' : '#FCD34D',
+                          borderColor: item.status === 'accepted' ? 'var(--color-success-border)' : 'var(--color-warning-border)',
+                        }}>
+                          {item.status.toUpperCase()}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <h4 className="sos-card-title">{item.emergency_type_label}</h4>
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent-orange)' }}>
+                          {item.people_count} {item.people_count === 1 ? 'Person' : 'People'}
+                        </span>
+                      </div>
+
+                      <div className="sos-card-meta">
+                        <span>Node #{item.victim_id}</span>
+                        <span>{item.latitude.toFixed(4)}°, {item.longitude.toFixed(4)}°</span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {activeTab === 'groups' && (
+            <div className="triage-cards-scrollable">
+              {groups.map((group) => (
+                <div
+                  key={group.group_id}
+                  onClick={() => setSelectedGroup(group)}
+                  className="card"
+                  style={{
+                    padding: '16px',
+                    cursor: 'pointer',
+                    borderLeft: '3px solid var(--accent-orange)',
+                    marginBottom: '8px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span className="font-mono" style={{ fontSize: '12px', fontWeight: 700, color: 'var(--accent-orange)' }}>
+                      {group.group_id}
+                    </span>
+                    <span className="status-chip" style={{ height: '24px', fontSize: '11px' }}>
+                      {group.report_count} Reports Merged
+                    </span>
+                  </div>
+                  <h4 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
+                    {group.summary_card}
+                  </h4>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'var(--font-family-mono)' }}>
+                    <span>Centroid: {group.centroid_lat.toFixed(4)}, {group.centroid_lon.toFixed(4)}</span>
+                    <span style={{ color: '#10B981', fontWeight: 700, textTransform: 'uppercase' }}>{group.status}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Right Column: Leaflet Map & Selected Incident Drawer */}
+        <div className="map-column">
+          <div className="map-wrapper-card">
+            <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
+
+            {/* Dark Styled Map Legend */}
+            <div className="map-legend-overlay">
+              <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-tertiary)', fontWeight: 700 }}>
+                Priority Triage Legend
+              </span>
+              <div className="legend-row">
+                <span className="legend-dot" style={{ backgroundColor: '#EF4444' }}></span>
+                <span>P1 Life Threatening</span>
+              </div>
+              <div className="legend-row">
+                <span className="legend-dot" style={{ backgroundColor: '#FF6A1A' }}></span>
+                <span>P2 Urgent Rescue</span>
+              </div>
+              <div className="legend-row">
+                <span className="legend-dot" style={{ backgroundColor: '#EAB308' }}></span>
+                <span>P3 Needs Help</span>
+              </div>
+              <div className="legend-row">
+                <span className="legend-dot" style={{ backgroundColor: '#10B981' }}></span>
+                <span>P4 Check-in / Safe</span>
+              </div>
             </div>
           </div>
 
-          {/* Selected SOS or Cluster Detail Panel */}
-          {selectedSos ? (
-            <div className="card space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <span className={`badge ${
-                    selectedSos.severity === 1 ? 'bg-red-950 text-red-300 border-red-700' :
-                    selectedSos.severity === 2 ? 'bg-orange-950 text-orange-300 border-orange-700' :
-                    selectedSos.severity === 3 ? 'bg-yellow-950 text-yellow-300 border-yellow-700' :
-                    'bg-cyan-950 text-cyan-300 border-cyan-700'
-                  }`}>
+          {/* Selected SOS Incident Detail Drawer */}
+          {selectedSos && (
+            <div className="detail-drawer card-accent-top">
+              <div className="card-header" style={{ marginBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span className={`badge-priority ${selectedSos.severity === 1 ? 'p1' : selectedSos.severity === 2 ? 'p2' : selectedSos.severity === 3 ? 'p3' : 'p4'}`}>
                     {selectedSos.severity_label}
                   </span>
-                  <h4 className="font-bold text-white text-base">{selectedSos.emergency_type_label}</h4>
+                  <h3 className="card-header-title">{selectedSos.emergency_type_label}</h3>
                 </div>
-                <button
-                  onClick={() => setSelectedSos(null)}
-                  className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800"
-                >
-                  Close
+                <button onClick={() => setSelectedSos(null)} className="icon-btn-round" aria-label="Close detail panel">
+                  <X className="w-4 h-4" />
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs font-mono bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', padding: '14px', borderRadius: '8px', backgroundColor: 'var(--bg-input)', border: '1px solid var(--border-default)', fontSize: '13px', fontFamily: 'var(--font-family-mono)' }}>
                 <div>
-                  <span className="text-slate-400 block">Victim Device:</span>
-                  <span className="text-white font-bold">Node #{selectedSos.victim_id}</span>
+                  <span className="text-tertiary" style={{ display: 'block', fontSize: '11px', textTransform: 'uppercase' }}>Victim Node</span>
+                  <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>#{selectedSos.victim_id}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block">People:</span>
-                  <span className="text-orange-400 font-bold">{selectedSos.people_count} person(s)</span>
+                  <span className="text-tertiary" style={{ display: 'block', fontSize: '11px', textTransform: 'uppercase' }}>People</span>
+                  <span style={{ fontWeight: 700, color: 'var(--accent-orange)' }}>{selectedSos.people_count} Person(s)</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block">Coordinates:</span>
-                  <span className="text-slate-200">{selectedSos.latitude.toFixed(4)}, {selectedSos.longitude.toFixed(4)}</span>
+                  <span className="text-tertiary" style={{ display: 'block', fontSize: '11px', textTransform: 'uppercase' }}>Coordinates</span>
+                  <span style={{ color: 'var(--text-primary)' }}>{selectedSos.latitude.toFixed(4)}°, {selectedSos.longitude.toFixed(4)}°</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block">Status:</span>
-                  <span className={`font-bold uppercase ${
-                    selectedSos.status === 'accepted' ? 'text-emerald-400' : 'text-amber-400'
-                  }`}>
+                  <span className="text-tertiary" style={{ display: 'block', fontSize: '11px', textTransform: 'uppercase' }}>Status</span>
+                  <span style={{ fontWeight: 700, textTransform: 'uppercase', color: selectedSos.status === 'accepted' ? '#10B981' : '#F59E0B' }}>
                     {selectedSos.status}
                   </span>
                 </div>
               </div>
 
-              {/* Action Button: Only visible if Authorized Responder is logged in */}
-              <div className="flex items-center justify-between pt-2">
+              {/* Action Button: Authorized Responder Only */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginTop: '6px' }}>
                 {activeResponder ? (
                   selectedSos.status === 'accepted' ? (
-                    <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-950/40 px-3 py-1.5 rounded border border-emerald-800">
-                      <ShieldCheck className="w-4 h-4" />
-                      Accepted by {selectedSos.responder_name} (ETA: ~{selectedSos.eta_minutes || 15}m)
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#6EE7B7', padding: '8px 14px', borderRadius: '8px', backgroundColor: 'var(--color-success-subtle)', border: '1px solid var(--color-success-border)' }}>
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span>Accepted by {selectedSos.responder_name} (ETA: ~{selectedSos.eta_minutes || 15}m)</span>
                     </div>
                   ) : (
                     <button
+                      type="button"
                       onClick={() => handleAccept(selectedSos.packet_id)}
                       disabled={acceptingId === selectedSos.packet_id}
-                      className="btn btn-primary text-xs py-2 px-4 flex items-center gap-2 font-bold"
+                      className="btn btn-primary"
+                      style={{ height: '42px', padding: '0 20px', fontWeight: 700 }}
                     >
                       <ShieldCheck className="w-4 h-4" />
-                      {acceptingId === selectedSos.packet_id ? 'Generating Signature...' : 'Accept SOS & Sign Acknowledgement'}
+                      <span>{acceptingId === selectedSos.packet_id ? 'Generating Signature...' : 'Accept SOS & Sign Acknowledgement'}</span>
                     </button>
                   )
                 ) : (
-                  <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-900/80 px-3 py-2 rounded border border-slate-800">
-                    <Lock className="w-3.5 h-3.5 text-orange-400" />
-                    <span>Login as an authorized responder to accept this emergency.</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    <Lock className="w-4 h-4 text-orange-400" />
+                    <span>Login as an authorized commander to accept and sign rescue allocations.</span>
                   </div>
                 )}
               </div>
 
-              {/* Raw 21-Byte Packet Breakdown */}
+              {/* Raw 21-Byte Packet Breakdown Inspector */}
               {selectedSos.raw_hex && (
                 <PacketInspector
                   rawHex={selectedSos.raw_hex}
@@ -289,150 +410,55 @@ export default function DashboardView({
                 />
               )}
             </div>
-          ) : selectedGroup ? (
-            /* Selected Group Detail Panel */
-            <div className="card space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-orange-400" />
-                  <h4 className="font-bold text-white text-base">Cluster Group: {selectedGroup.group_id}</h4>
+          )}
+
+          {/* Selected Group Drawer */}
+          {selectedGroup && (
+            <div className="detail-drawer card-accent-top">
+              <div className="card-header" style={{ marginBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Layers className="w-5 h-5 text-orange-500" />
+                  <h3 className="card-header-title">Cluster Group: {selectedGroup.group_id}</h3>
                 </div>
-                <button
-                  onClick={() => setSelectedGroup(null)}
-                  className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800"
-                >
-                  Close
+                <button onClick={() => setSelectedGroup(null)} className="icon-btn-round" aria-label="Close group panel">
+                  <X className="w-4 h-4" />
                 </button>
               </div>
-              <p className="text-sm font-semibold text-emerald-300">
+
+              <p style={{ fontSize: '15px', fontWeight: 700, color: '#6EE7B7', marginBottom: '8px' }}>
                 {selectedGroup.summary_card}
               </p>
-              <div className="text-xs text-slate-400">
-                All individual victim reports aggregated within a 50-meter radius into a single response target:
-              </div>
+              <p className="text-helper" style={{ marginBottom: '16px' }}>
+                Compatible emergency reports aggregated within a 50-meter radius into a single dispatch target:
+              </p>
 
-              <div className="space-y-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {selectedGroup.reports?.map((rep, idx) => (
                   <div
                     key={idx}
                     onClick={() => setSelectedSos(rep)}
-                    className="p-2.5 rounded bg-slate-900 hover:bg-slate-800/80 cursor-pointer border border-slate-800 flex items-center justify-between text-xs"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '12px 14px',
+                      borderRadius: '8px',
+                      backgroundColor: 'var(--bg-input)',
+                      border: '1px solid var(--border-default)',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                    }}
                   >
-                    <div className="font-mono">
-                      <span className="text-white font-bold">Node #{rep.victim_id}</span> ({rep.people_count} people)
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400">{rep.latitude.toFixed(4)}, {rep.longitude.toFixed(4)}</span>
-                      <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                    <span style={{ fontFamily: 'var(--font-family-mono)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                      Node #{rep.victim_id} ({rep.people_count} People)
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)' }}>
+                      <span className="font-mono">{rep.latitude.toFixed(4)}°, {rep.longitude.toFixed(4)}°</span>
+                      <ChevronRight className="w-4 h-4 text-orange-400" />
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
-          ) : null}
-        </div>
-
-        {/* Right Column: Priority Triage Queue & Duplicate Groups */}
-        <div className="lg:col-span-5 space-y-4">
-          {/* Tabs: Triage vs Groups */}
-          <div className="flex rounded-lg bg-slate-900 p-1 border border-slate-800 text-xs font-bold">
-            <button
-              onClick={() => setActiveTab('triage')}
-              className={`flex-1 py-2 rounded-md transition-all ${
-                activeTab === 'triage' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              IECE Priority Queue ({reports.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('groups')}
-              className={`flex-1 py-2 rounded-md transition-all ${
-                activeTab === 'groups' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Cluster Groups ({groups.length})
-            </button>
-          </div>
-
-          {/* Tab 1: Priority Queue */}
-          {activeTab === 'triage' && (
-            <div className="space-y-2.5 max-h-[650px] overflow-y-auto pr-1">
-              {reports.length === 0 ? (
-                <div className="card text-center p-8 text-slate-400">
-                  <Clock className="w-8 h-8 mx-auto mb-2 opacity-40 text-orange-400" />
-                  <p>No active emergencies in queue.</p>
-                </div>
-              ) : (
-                reports.map((item) => (
-                  <div
-                    key={item.packet_id}
-                    onClick={() => setSelectedSos(item)}
-                    className={`card p-3.5 hover:border-orange-500/80 cursor-pointer transition-all ${
-                      selectedSos?.packet_id === item.packet_id ? 'border-orange-500 bg-slate-850' : ''
-                    }`}
-                    style={{
-                      borderLeft: `4px solid ${
-                        item.severity === 1 ? '#ef4444' :
-                        item.severity === 2 ? '#f97316' :
-                        item.severity === 3 ? '#eab308' : '#06b6d4'
-                      }`,
-                    }}
-                  >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${
-                        item.severity === 1 ? 'bg-red-950/80 text-red-300' :
-                        item.severity === 2 ? 'bg-orange-950/80 text-orange-300' :
-                        item.severity === 3 ? 'bg-yellow-950/80 text-yellow-300' :
-                        'bg-cyan-950/80 text-cyan-300'
-                      }`}>
-                        {item.severity_label}
-                      </span>
-                      <span className={`text-[11px] font-bold uppercase font-mono ${
-                        item.status === 'accepted' ? 'text-emerald-400' : 'text-amber-400'
-                      }`}>
-                        {item.status}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-bold text-white text-sm">{item.emergency_type_label}</h4>
-                      <span className="font-mono text-xs text-orange-400 font-bold">
-                        {item.people_count} {item.people_count === 1 ? 'person' : 'people'}
-                      </span>
-                    </div>
-
-                    <div className="mt-2 flex items-center justify-between text-xs text-slate-400 font-mono">
-                      <span>Node #{item.victim_id}</span>
-                      <span>{item.latitude.toFixed(4)}, {item.longitude.toFixed(4)}</span>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-
-          {/* Tab 2: Duplicate Cluster Groups */}
-          {activeTab === 'groups' && (
-            <div className="space-y-3 max-h-[650px] overflow-y-auto pr-1">
-              {groups.map((group) => (
-                <div
-                  key={group.group_id}
-                  onClick={() => setSelectedGroup(group)}
-                  className="card p-3.5 hover:border-orange-500 cursor-pointer space-y-2 border-l-4 border-l-orange-500"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-xs font-bold text-orange-400">{group.group_id}</span>
-                    <span className="badge bg-slate-900 text-slate-300 border-slate-700">
-                      {group.report_count} Reports Merged
-                    </span>
-                  </div>
-                  <h4 className="font-bold text-white text-sm">{group.summary_card}</h4>
-                  <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
-                    <span>Centroid: {group.centroid_lat.toFixed(4)}, {group.centroid_lon.toFixed(4)}</span>
-                    <span className="text-emerald-400 font-bold uppercase">{group.status}</span>
-                  </div>
-                </div>
-              ))}
             </div>
           )}
         </div>
@@ -440,57 +466,53 @@ export default function DashboardView({
 
       {/* Responder Login Modal */}
       {showLoginModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[2000] flex items-center justify-center p-4">
-          <div className="card max-w-md w-full space-y-4 border border-orange-500/50 shadow-2xl">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <div className="flex items-center gap-2">
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(6px)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div className="card" style={{ maxWidth: '440px', width: '100%', borderColor: 'var(--accent-orange)' }}>
+            <div className="card-header" style={{ marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <KeyRound className="w-5 h-5 text-orange-500" />
-                <h3 className="text-lg font-bold text-white">Authorized Responder Authentication</h3>
+                <h3 className="card-header-title">Responder Authentication</h3>
               </div>
-              <button
-                onClick={() => setShowLoginModal(false)}
-                className="text-slate-400 hover:text-white text-sm"
-              >
-                ✕
+              <button onClick={() => setShowLoginModal(false)} className="icon-btn-round" aria-label="Close modal">
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-300">
-              Sign in with an official responder keypair to unlock cryptographic Ed25519 SOS acceptance.
+            <p className="text-helper" style={{ marginBottom: '16px' }}>
+              Sign in with an authorized responder keypair to unlock Ed25519 digital SOS acceptance.
             </p>
 
-            <form onSubmit={handleLoginSubmit} className="space-y-3">
-              <div>
-                <label className="text-xs font-bold text-slate-300 block mb-1 uppercase">Select Authorized Responder</label>
+            <form onSubmit={handleLoginSubmit}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="responder-select">Authorized Commander</label>
                 <select
+                  id="responder-select"
                   value={loginResponderId}
                   onChange={(e) => setLoginResponderId(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 text-white rounded p-2.5 text-sm font-semibold focus:border-orange-500 focus:outline-none"
+                  className="form-control-input"
+                  style={{ height: '44px' }}
                 >
                   <option value="RESP-NDRF-01">Capt. A. Sharma (NDRF 4th Battalion - Flood Rescue)</option>
                   <option value="RESP-SDRF-02">Inspector M. Rao (SDRF Quick Response - Medical Lead)</option>
                 </select>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-300 block mb-1 uppercase">Responder Passcode</label>
+              <div className="form-group">
+                <label className="form-label" htmlFor="responder-passcode">Commander Passcode</label>
                 <input
+                  id="responder-passcode"
                   type="password"
                   defaultValue="demo123"
-                  className="w-full bg-slate-900 border border-slate-700 text-white rounded p-2 text-sm font-mono focus:border-orange-500 focus:outline-none"
+                  className="form-control-input font-mono"
                 />
               </div>
 
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowLoginModal(false)}
-                  className="btn btn-secondary text-xs py-2 px-3"
-                >
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+                <button type="button" onClick={() => setShowLoginModal(false)} className="btn btn-secondary">
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary text-xs py-2 px-4 font-bold">
-                  Authenticate Responder
+                <button type="submit" className="btn btn-primary">
+                  Authenticate Commander
                 </button>
               </div>
             </form>

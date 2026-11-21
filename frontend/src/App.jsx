@@ -11,15 +11,17 @@ import {
   CheckCircle,
   Wifi,
   WifiOff,
+  Home,
 } from 'lucide-react';
 
+import LandingView from './components/LandingView';
 import VictimView from './components/VictimView';
 import DashboardView from './components/DashboardView';
 import DemoControlPanel from './components/DemoControlPanel';
 import AboutHonestyModal from './components/AboutHonestyModal';
 
 export default function App() {
-  const [activeView, setActiveView] = useState('victim'); // 'victim', 'dashboard', 'demo'
+  const [activeView, setActiveView] = useState('landing'); // 'landing', 'victim', 'dashboard', 'demo'
   const [reports, setReports] = useState([]);
   const [groups, setGroups] = useState([]);
   const [stats, setStats] = useState(null);
@@ -28,6 +30,12 @@ export default function App() {
   const [wsConnected, setWsConnected] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [activeScriptedStep, setActiveScriptedStep] = useState(null);
+  const [toastMessage, setToastMessage] = useState('');
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(''), 4000);
+  };
 
   // Fetch initial data
   const fetchData = useCallback(async () => {
@@ -70,12 +78,15 @@ export default function App() {
           const msg = JSON.parse(event.data);
           if (msg.type === 'NEW_SOS') {
             fetchData();
+            showToast(`New SOS Received: Node #${msg.report?.victim_id} (${msg.report?.emergency_type_label})`);
           } else if (msg.type === 'SOS_ACCEPTED') {
             fetchData();
+            showToast(`Rescue Mission Accepted by ${msg.responder_name}`);
           } else if (msg.type === 'SIM_CONFIG_UPDATED') {
             setChannelStatus(msg.config);
           } else if (msg.type === 'ACK_TAMPERED') {
             fetchData();
+            showToast(`[Security Test] Acknowledgement payload altered`);
           }
         } catch (err) {
           console.error('WS parse error:', err);
@@ -110,6 +121,7 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setActiveResponder(data);
+        showToast(`Authenticated: ${data.responder_name}`);
       }
     } catch (err) {
       alert(`Login failed: ${err.message}`);
@@ -118,6 +130,7 @@ export default function App() {
 
   const handleLogout = () => {
     setActiveResponder(null);
+    showToast('Responder signed out');
   };
 
   // Handler: Accept SOS
@@ -134,6 +147,7 @@ export default function App() {
       });
       if (res.ok) {
         fetchData();
+        showToast(`Signed Ed25519 acknowledgement for ${sosId}`);
       }
     } catch (err) {
       alert(`Accept failed: ${err.message}`);
@@ -161,6 +175,7 @@ export default function App() {
   const handleResetData = async () => {
     const res = await fetch('/api/demo/reset', { method: 'POST' });
     await fetchData();
+    showToast('Demo data reset to clean slate');
     return await res.json();
   };
 
@@ -168,6 +183,7 @@ export default function App() {
   const handleSeedData = async () => {
     const res = await fetch('/api/demo/seed', { method: 'POST' });
     await fetchData();
+    showToast('Loaded disaster scenario seed dataset');
     return await res.json();
   };
 
@@ -176,6 +192,7 @@ export default function App() {
     const res = await fetch('/api/demo/sample-two', { method: 'POST' });
     await fetchData();
     setActiveView('dashboard');
+    showToast('Sample Two dispatched: Cardiac (P1) preempts Stranded (P3)!');
     return await res.json();
   };
 
@@ -184,115 +201,122 @@ export default function App() {
     const res = await fetch('/api/demo/sample-five', { method: 'POST' });
     await fetchData();
     setActiveView('dashboard');
+    showToast('Sample Five generated: Auto-grouped into single cluster card!');
     return await res.json();
   };
 
   // Handler: Scripted Walkthrough Sequence
   const handleTriggerScriptedStep = (stepNumber) => {
     setActiveScriptedStep(stepNumber);
-    if (stepNumber === 1) {
+    if (stepNumber === 1 || stepNumber === 2) {
       setActiveView('victim');
-    } else if (stepNumber === 2) {
-      setActiveView('victim');
-    } else if (stepNumber === 3) {
+    } else if (stepNumber === 3 || stepNumber === 4) {
       setActiveView('dashboard');
-    } else if (stepNumber === 4) {
-      setActiveView('dashboard');
-      if (!activeResponder) {
+      if (stepNumber === 4 && !activeResponder) {
         handleLogin('RESP-NDRF-01');
       }
-    } else if (stepNumber === 5) {
-      setActiveView('victim');
-    } else if (stepNumber === 6) {
+    } else if (stepNumber === 5 || stepNumber === 6) {
       setActiveView('victim');
     }
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 font-sans pb-12">
-      {/* Top Navbar */}
-      <header className="sticky top-0 z-50 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3">
-        <div className="max-w-7xl mx-auto flex items-center justify-between flex-wrap gap-3">
-          {/* Brand */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shadow-lg shadow-orange-500/20 border border-orange-400/40">
-              <Radio className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-black text-white tracking-wider">RESCUE LINK</h1>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-950 text-orange-400 font-bold border border-orange-800">
-                  ASTRA HACKATHON
-                </span>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* Sticky Header Top Bar */}
+      <header className="app-header">
+        <div className="page-container">
+          <div className="app-header-inner">
+            {/* Left: Brand & Logo */}
+            <div className="brand-group" onClick={() => setActiveView('landing')}>
+              <div className="brand-icon-box">
+                <Radio className="w-5 h-5 text-white" />
               </div>
-              <p className="text-[11px] text-slate-400">Offline Emergency Communication & Coordination Engine (IECE)</p>
-            </div>
-          </div>
-
-          {/* View Switcher Navigation */}
-          <nav className="flex items-center rounded-xl bg-slate-950 p-1 border border-slate-800 text-xs font-bold">
-            <button
-              onClick={() => setActiveView('victim')}
-              className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-                activeView === 'victim'
-                  ? 'bg-orange-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Radio className="w-3.5 h-3.5" />
-              Victim SOS Terminal
-            </button>
-            <button
-              onClick={() => setActiveView('dashboard')}
-              className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-                activeView === 'dashboard'
-                  ? 'bg-orange-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <MapPin className="w-3.5 h-3.5" />
-              Rescue Dashboard ({reports.length})
-            </button>
-            <button
-              onClick={() => setActiveView('demo')}
-              className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-                activeView === 'demo'
-                  ? 'bg-orange-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Sliders className="w-3.5 h-3.5" />
-              Demo Control Panel
-            </button>
-          </nav>
-
-          {/* Badges & Auditing Modal Trigger */}
-          <div className="flex items-center gap-2.5">
-            {/* Live WS Status */}
-            <div className="flex items-center gap-1 text-[11px] font-mono text-slate-400" title={wsConnected ? 'WebSocket Live Telemetry Active' : 'WebSocket Reconnecting...'}>
-              {wsConnected ? <Wifi className="w-3.5 h-3.5 text-emerald-400" /> : <WifiOff className="w-3.5 h-3.5 text-red-400" />}
-              <span className="hidden sm:inline">{wsConnected ? 'LIVE' : 'OFFLINE'}</span>
+              <div className="brand-text-block">
+                <span className="brand-title">RESCUE LINK</span>
+                <span className="brand-subtitle">ASTRA HACKATHON • SATELLITE & NAV CONNECTIVITY</span>
+              </div>
             </div>
 
-            {/* Simulated Badge */}
-            <span className={`badge ${channelStatus?.is_simulated ? 'badge-simulated' : 'badge-real'}`}>
-              {channelStatus?.is_simulated ? 'SIMULATED LINK' : 'REAL LORA'}
-            </span>
+            {/* Centre: Nav Tabs / Pills */}
+            <nav className="nav-pills-container" role="tablist" aria-label="Main Navigation">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeView === 'landing'}
+                onClick={() => setActiveView('landing')}
+                className={`nav-pill ${activeView === 'landing' ? 'active' : ''}`}
+              >
+                <Home className="w-4 h-4" />
+                <span>Overview</span>
+              </button>
 
-            {/* Architecture Audit Modal */}
-            <button
-              onClick={() => setShowAboutModal(true)}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors border border-slate-700"
-              title="System Architecture & Honesty Disclosure"
-            >
-              <Info className="w-4 h-4 text-orange-400" />
-            </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeView === 'victim'}
+                onClick={() => setActiveView('victim')}
+                className={`nav-pill ${activeView === 'victim' ? 'active' : ''}`}
+              >
+                <Radio className="w-4 h-4" />
+                <span>Victim Terminal</span>
+              </button>
+
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeView === 'dashboard'}
+                onClick={() => setActiveView('dashboard')}
+                className={`nav-pill ${activeView === 'dashboard' ? 'active' : ''}`}
+              >
+                <MapPin className="w-4 h-4" />
+                <span>Rescue Dashboard</span>
+                <span className="nav-badge">{reports.length}</span>
+              </button>
+
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeView === 'demo'}
+                onClick={() => setActiveView('demo')}
+                className={`nav-pill ${activeView === 'demo' ? 'active' : ''}`}
+              >
+                <Sliders className="w-4 h-4" />
+                <span>Demo Control</span>
+              </button>
+            </nav>
+
+            {/* Right: Status Group */}
+            <div className="status-area">
+              <div className={`status-chip ${wsConnected ? 'network-online' : 'network-offline'}`}>
+                <span className="status-dot"></span>
+                <span>Network: {wsConnected ? 'Online' : 'Offline'}</span>
+              </div>
+
+              <div className={`status-chip ${channelStatus?.is_simulated ? 'link-simulated' : 'link-real'}`}>
+                <span className="status-dot"></span>
+                <span>Link: {channelStatus?.is_simulated ? 'Simulated' : 'Real LoRa'}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAboutModal(true)}
+                className="icon-btn-round"
+                title="System Architecture & Honesty Audit"
+                aria-label="System Architecture & Honesty Audit"
+              >
+                <Info className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </header>
 
-      {/* Main App Content */}
-      <main className="max-w-7xl mx-auto px-4 pt-6 flex-1 w-full">
+      {/* Main Page Container */}
+      <main className="page-container" style={{ flex: 1, paddingBottom: '32px' }}>
+        {activeView === 'landing' && (
+          <LandingView onNavigate={(view) => setActiveView(view)} />
+        )}
+
         {activeView === 'victim' && (
           <VictimView
             channelStatus={channelStatus}
@@ -328,7 +352,32 @@ export default function App() {
         )}
       </main>
 
-      {/* Honesty & Architecture Audit Modal */}
+      {/* Toast Notification Alert */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          zIndex: 3000,
+          backgroundColor: 'var(--bg-surface-elevated)',
+          border: '1px solid var(--accent-orange-border)',
+          borderRadius: '8px',
+          padding: '12px 18px',
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+          color: 'var(--text-primary)',
+          fontSize: '13px',
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          animation: 'pulse-subtle 2s ease',
+        }}>
+          <CheckCircle className="w-4 h-4 text-orange-400" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Architecture & Honesty Disclosure Modal */}
       <AboutHonestyModal
         isOpen={showAboutModal}
         onClose={() => setShowAboutModal(false)}

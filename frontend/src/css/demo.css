@@ -1,0 +1,158 @@
+/* ==========================================================================
+   DEMO CONTROL PANEL STYLES
+   ========================================================================== */
+
+.demo-page-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-top: 24px;
+  padding-bottom: 48px;
+}
+
+/* --------------------------------------------------------------------------
+   MESSAGE JOURNEY HORIZONTAL TIMELINE
+   -------------------------------------------------------------------------- */
+.journey-timeline-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.journey-nodes-row {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 8px;
+  position: relative;
+}
+
+@media (max-width: 900px) {
+  .journey-nodes-row {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .journey-nodes-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.journey-node-box {
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  transition: all var(--transition-fast);
+  position: relative;
+}
+
+.journey-node-box.active {
+  background-color: rgba(255, 106, 26, 0.12);
+  border-color: var(--accent-orange);
+  box-shadow: 0 0 16px var(--accent-orange-glow);
+  transform: translateY(-2px);
+}
+
+.journey-node-title {
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.journey-node-sub {
+  font-size: var(--font-size-micro);
+  color: var(--text-tertiary);
+  font-family: var(--font-family-mono);
+}
+
+/* --------------------------------------------------------------------------
+   SCRIPTED WALKTHROUGH 6-STEP GRID
+   -------------------------------------------------------------------------- */
+.scripted-steps-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .scripted-steps-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.step-card-btn {
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--transition-fast);
+}
+
+.step-card-btn:hover {
+  background-color: var(--bg-surface-hover);
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+}
+
+.step-number-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: var(--accent-orange);
+  color: #FFFFFF;
+  font-weight: 800;
+  font-size: var(--font-size-caption);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.step-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.step-title {
+  font-size: var(--font-size-body);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.step-desc {
+  font-size: var(--font-size-helper);
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+/* --------------------------------------------------------------------------
+   SIMULATOR SLIDERS
+   -------------------------------------------------------------------------- */
+.sim-controls-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+
+@media (max-width: 600px) {
+  .sim-controls-grid {
+    grid-template-columns: 1fr;
+  }
+}
