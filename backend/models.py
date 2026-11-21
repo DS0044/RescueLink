@@ -102,3 +102,47 @@ class ClusterGroupModel(Base):
     accepted_at = Column(BigInteger, nullable=True)
     created_at = Column(BigInteger, nullable=False)
     updated_at = Column(BigInteger, nullable=False)
+
+
+class UserModel(Base):
+    __tablename__ = "users"
+
+    id = Column(String(64), primary_key=True, index=True)
+    name = Column(String(128), nullable=False)
+    username = Column(String(64), unique=True, nullable=False, index=True)
+    email = Column(String(128), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(32), nullable=False, default="responder")  # admin, coordinator, responder
+    status = Column(String(32), nullable=False, default="pending")  # pending, active, disabled
+    organisation = Column(String(128), nullable=False, default="NDRF")
+    created_at = Column(BigInteger, nullable=False)
+    last_login = Column(BigInteger, nullable=True)
+    failed_attempts = Column(Integer, nullable=False, default=0)
+    locked_until = Column(BigInteger, nullable=False, default=0)
+    must_change_password = Column(Boolean, nullable=False, default=False)
+    temp_password = Column(String(64), nullable=True)
+
+
+class RefreshTokenModel(Base):
+    __tablename__ = "refresh_tokens"
+
+    token_id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(String(64), nullable=False, index=True)
+    token_hash = Column(String(128), nullable=False, index=True)
+    expires_at = Column(BigInteger, nullable=False)
+    revoked = Column(Boolean, nullable=False, default=False)
+    created_at = Column(BigInteger, nullable=False)
+    user_agent = Column(String(255), nullable=True)
+    ip_address = Column(String(64), nullable=True)
+
+
+class AuditLogModel(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(String(64), nullable=True, index=True)
+    username = Column(String(64), nullable=True)
+    action = Column(String(64), nullable=False, index=True)
+    details = Column(Text, nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    timestamp = Column(BigInteger, nullable=False, index=True)
