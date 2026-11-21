@@ -1,0 +1,9 @@
+{
+  "name": "rescuelink",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RescueLink - Offline Emergency Communication & Coordination Engine",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build"
+  }
+}

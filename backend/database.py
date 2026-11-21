@@ -9,7 +9,9 @@ from sqlalchemy import text
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./rescuelink.db")
+is_vercel = os.getenv("VERCEL", "").lower() in ("1", "true")
+default_db_file = "/tmp/rescuelink.db" if is_vercel else "./rescuelink.db"
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{default_db_file}")
 
 # For SQLite, connect_args is needed for multithreading
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
@@ -20,6 +22,15 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    if is_vercel:
+        # Auto seed users and sample incidents on serverless cold start if empty
+        try:
+            from seed_users import seed_demo_users
+            from seed import seed_sample_incidents
+            seed_demo_users()
+            seed_sample_incidents()
+        except Exception:
+            pass
     if DATABASE_URL.startswith("sqlite"):
         with engine.connect() as conn:
             for col_name, col_type in [
