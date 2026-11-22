@@ -2064,12 +2064,13 @@ async def websocket_dashboard(
         ws_manager.disconnect(websocket)
 
 
-# Mount Static Frontend Bundle if built
+# Mount Static Frontend Bundle if built (Local development mode only; on Vercel, Vercel CDN serves static frontend directly)
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+is_vercel_env = os.getenv("VERCEL", "").lower() in ("1", "true")
 frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
-if os.path.exists(frontend_dist):
+if not is_vercel_env and os.path.exists(frontend_dist):
     assets_dir = os.path.join(frontend_dist, "assets")
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
