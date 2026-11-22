@@ -8,18 +8,15 @@ import {
   AlertTriangle,
   ArrowRight,
   KeyRound,
-  ShieldAlert,
-  Radio,
   CheckCircle2,
+  Sparkles,
 } from 'lucide-react';
 import { loginUser } from '../utils/auth';
 
 export default function LoginView({ onLoginSuccess, onNavigate, redirectTarget = 'dashboard' }) {
-  const [usernameOrEmail, setUsernameOrEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [usernameOrEmail, setUsernameOrEmail] = useState('admin');
+  const [password, setPassword] = useState('admin');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(false);
-  const [honeypot, setHoneypot] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const usernameInputRef = useRef(null);
@@ -35,7 +32,7 @@ export default function LoginView({ onLoginSuccess, onNavigate, redirectTarget =
     setErrorMessage('');
 
     if (!usernameOrEmail.trim()) {
-      setErrorMessage('Please enter your username or email address.');
+      setErrorMessage('Please enter your Responder ID or Username.');
       return;
     }
     if (!password) {
@@ -45,22 +42,28 @@ export default function LoginView({ onLoginSuccess, onNavigate, redirectTarget =
 
     setLoading(true);
     try {
-      const data = await loginUser(usernameOrEmail.trim(), password, rememberMe, honeypot);
+      const data = await loginUser(usernameOrEmail.trim(), password);
       if (onLoginSuccess) {
         onLoginSuccess(data.user, redirectTarget);
       }
     } catch (err) {
-      setErrorMessage(err.message || 'Invalid username/email or password');
+      setErrorMessage(err.message || 'Invalid ID or password');
     } finally {
       setLoading(false);
     }
   };
 
-  // Demo accounts quick-fill helper for live evaluation
+  // Demo accounts quick-fill helper
   const handleQuickFill = (u, p) => {
     setUsernameOrEmail(u);
     setPassword(p);
     setErrorMessage('');
+    // Auto-login on quick fill click
+    loginUser(u, p).then((data) => {
+      if (onLoginSuccess) {
+        onLoginSuccess(data.user, redirectTarget);
+      }
+    });
   };
 
   return (
@@ -70,10 +73,10 @@ export default function LoginView({ onLoginSuccess, onNavigate, redirectTarget =
         <div className="auth-card-header">
           <div
             style={{
-              width: '52px',
-              height: '52px',
-              borderRadius: '12px',
-              backgroundColor: 'rgba(255, 106, 26, 0.12)',
+              width: '54px',
+              height: '54px',
+              borderRadius: '14px',
+              backgroundColor: 'rgba(255, 106, 26, 0.14)',
               border: '1.5px solid var(--accent-orange)',
               display: 'flex',
               alignItems: 'center',
@@ -84,7 +87,26 @@ export default function LoginView({ onLoginSuccess, onNavigate, redirectTarget =
             <Shield className="w-7 h-7 text-orange-500" />
           </div>
           <h2 className="auth-card-title">Rescue Team Sign In</h2>
-          <p className="auth-card-subtitle">Authorised disaster response personnel only</p>
+          <p className="auth-card-subtitle">Simple, instant access for disaster response teams</p>
+        </div>
+
+        {/* Default credentials banner */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            border: '1px solid rgba(16, 185, 129, 0.3)',
+            borderRadius: '8px',
+            padding: '10px 14px',
+            color: '#10B981',
+            fontSize: '13px',
+            fontWeight: 600,
+          }}
+        >
+          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+          <span>Default ID: <strong>admin</strong> | Password: <strong>admin</strong></span>
         </div>
 
         {/* Inline Error Banner */}
@@ -96,23 +118,11 @@ export default function LoginView({ onLoginSuccess, onNavigate, redirectTarget =
         )}
 
         {/* Sign In Form */}
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-          {/* Honeypot field (hidden from screen reader and visual layout) */}
-          <input
-            type="text"
-            name="security_honeypot_field"
-            value={honeypot}
-            onChange={(e) => setHoneypot(e.target.value)}
-            className="honeypot-field"
-            tabIndex={-1}
-            autoComplete="off"
-            aria-hidden="true"
-          />
-
-          {/* Username or Email */}
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Responder ID */}
           <div className="input-field-wrapper">
             <label className="input-label" htmlFor="auth-username">
-              Username or Official Email
+              Responder ID / Username
             </label>
             <div style={{ position: 'relative' }}>
               <input
@@ -121,7 +131,7 @@ export default function LoginView({ onLoginSuccess, onNavigate, redirectTarget =
                 type="text"
                 value={usernameOrEmail}
                 onChange={(e) => setUsernameOrEmail(e.target.value)}
-                placeholder="e.g. admin or commander@ndrf.gov.in"
+                placeholder="e.g. admin or responder"
                 className="input-field"
                 required
                 autoComplete="username"
@@ -132,18 +142,16 @@ export default function LoginView({ onLoginSuccess, onNavigate, redirectTarget =
 
           {/* Password */}
           <div className="input-field-wrapper">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-              <label className="input-label" htmlFor="auth-password" style={{ marginBottom: 0 }}>
-                Password
-              </label>
-            </div>
+            <label className="input-label" htmlFor="auth-password">
+              Password
+            </label>
             <div className="password-input-wrapper">
               <input
                 id="auth-password"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter responder passphrase"
+                placeholder="e.g. admin"
                 className="input-field"
                 required
                 autoComplete="current-password"
@@ -160,20 +168,6 @@ export default function LoginView({ onLoginSuccess, onNavigate, redirectTarget =
             </div>
           </div>
 
-          {/* Keep me signed in */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-            <input
-              id="auth-remember-me"
-              type="checkbox"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              style={{ width: '16px', height: '16px', accentColor: 'var(--accent-orange)', cursor: 'pointer' }}
-            />
-            <label htmlFor="auth-remember-me" style={{ fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-              Keep me signed in on this device (30 days)
-            </label>
-          </div>
-
           {/* Submit Button */}
           <button
             type="submit"
@@ -184,79 +178,46 @@ export default function LoginView({ onLoginSuccess, onNavigate, redirectTarget =
               fontSize: '14px',
               fontWeight: 800,
               width: '100%',
-              marginTop: '4px',
+              marginTop: '6px',
               boxShadow: '0 4px 14px rgba(255, 106, 26, 0.4)',
+              cursor: 'pointer',
             }}
           >
             {loading ? (
-              <span>Verifying credentials...</span>
+              <span>Signing in...</span>
             ) : (
               <>
-                <span>Sign In to Response Console</span>
+                <span>Sign In to Dashboard</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>
         </form>
 
-        {/* Link to Request Access */}
-        <div style={{ marginTop: '20px', textAlign: 'center', fontSize: '13px', color: 'var(--text-secondary)' }}>
-          <span>Need responder access? </span>
-          <button
-            type="button"
-            onClick={() => onNavigate('register')}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--accent-orange)',
-              fontWeight: 700,
-              cursor: 'pointer',
-              textDecoration: 'underline',
-              padding: 0,
-            }}
-          >
-            Request responder access
-          </button>
-        </div>
-
-        {/* Live Evaluator Quick-Fill Section */}
+        {/* Quick 1-Click Fill Chips */}
         <div className="demo-accounts-pill-box">
           <div className="demo-pill-title">
-            <KeyRound className="w-3.5 h-3.5 text-orange-400" />
-            <span>Evaluation Demo Logins (Click to Fill)</span>
+            <Sparkles className="w-3.5 h-3.5 text-orange-400" />
+            <span>1-Click Quick Access</span>
           </div>
           <div className="demo-pill-grid">
             <div
               className="demo-account-chip"
-              onClick={() => handleQuickFill('admin', 'RescueAdmin@2026!')}
-              title="Incident Commander (Full Admin Access)"
+              onClick={() => handleQuickFill('admin', 'admin')}
+              title="Click to sign in as Administrator"
+              style={{ cursor: 'pointer' }}
             >
-              <strong>Admin (Capt. Sharma)</strong>
-              <span>Full control & users</span>
+              <strong>Admin Commander</strong>
+              <span>ID: admin | Pass: admin</span>
             </div>
             <div
               className="demo-account-chip"
-              onClick={() => handleQuickFill('coordinator_rao', 'RescueCoord@2026!')}
-              title="Disaster Coordinator (Priority Override + Triage)"
+              onClick={() => handleQuickFill('responder', 'responder')}
+              title="Click to sign in as Field Responder"
+              style={{ cursor: 'pointer' }}
             >
-              <strong>Coordinator (Insp. Rao)</strong>
-              <span>Triage & override</span>
-            </div>
-            <div
-              className="demo-account-chip"
-              onClick={() => handleQuickFill('responder_singh', 'RescueResp@2026!')}
-              title="Field Responder (View + Accept SOS)"
-            >
-              <strong>Responder (Hav. Singh)</strong>
-              <span>Field operations</span>
-            </div>
-            <div
-              className="demo-account-chip"
-              onClick={() => handleQuickFill('volunteer_kiran', 'RescueVolunteer@2026!')}
-              title="Pending Approval Account"
-            >
-              <strong>Pending (Kiran Kumar)</strong>
-              <span>Tests 403 approval gate</span>
+              <strong>Field Responder</strong>
+              <span>ID: responder | Pass: responder</span>
             </div>
           </div>
         </div>
