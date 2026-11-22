@@ -1,0 +1,15 @@
+.vercel
+.git
+.github
+venv
+.venv
+frontend/node_modules
+node_modules
+.pytest_cache
+*.db
+*.sqlite3
+__pycache__
+*.pyc
+firmware
+docs
+*.log
