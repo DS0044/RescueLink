@@ -20,17 +20,17 @@ engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+_db_initialized = False
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     if is_vercel:
-        # Auto seed users and sample incidents on serverless cold start if empty
         try:
             from seed_users import seed_demo_users
-            from seed import seed_sample_incidents
             seed_demo_users()
-            seed_sample_incidents()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error seeding demo users: {e}")
     if DATABASE_URL.startswith("sqlite"):
         with engine.connect() as conn:
             for col_name, col_type in [
@@ -49,10 +49,24 @@ def init_db():
                     pass
 
 
+def ensure_db_initialized():
+    global _db_initialized
+    if not _db_initialized:
+        init_db()
+        _db_initialized = True
+
 
 def get_db():
+    ensure_db_initialized()
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+if is_vercel:
+    try:
+        ensure_db_initialized()
+    except Exception:
+        pass

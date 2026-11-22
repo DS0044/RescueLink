@@ -15,6 +15,13 @@ if backend_dir not in sys.path:
 
 from fastapi import Request
 from main import app as fastapi_app
+from database import ensure_db_initialized
+
+# Ensure SQLite tables and demo accounts are seeded on cold start
+try:
+    ensure_db_initialized()
+except Exception as e:
+    print(f"Cold-start DB initialization notice: {e}")
 
 # Root API info route
 @fastapi_app.get("/api")
